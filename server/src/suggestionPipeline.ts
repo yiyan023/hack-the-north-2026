@@ -24,6 +24,7 @@ export class SuggestionPipeline {
   private rerunRequested = false;
   private lastAttemptAt = 0;
   private lastGeneratedVersion = 0;
+  private generationError?: string;
 
   constructor(
     private readonly buffer: RollingPostBuffer,
@@ -31,6 +32,7 @@ export class SuggestionPipeline {
     private readonly getContext: () => {
       game: string;
       toneExamples: string[];
+      replyTo: string;
     },
     private readonly options: PipelineOptions,
   ) {}
@@ -41,6 +43,10 @@ export class SuggestionPipeline {
 
   get isRunning(): boolean {
     return Boolean(this.running);
+  }
+
+  get lastError(): string | undefined {
+    return this.generationError;
   }
 
   isStale(now = Date.now()): boolean {
@@ -58,6 +64,7 @@ export class SuggestionPipeline {
 
     this.running = this.generate()
       .catch((error) => {
+        this.generationError = error instanceof Error ? error.message : String(error);
         console.error("Suggestion generation failed", error);
         return this.deck;
       })
@@ -88,6 +95,7 @@ export class SuggestionPipeline {
   }
 
   private async generate(): Promise<SuggestionDeck | undefined> {
+    this.generationError = undefined;
     this.lastAttemptAt = Date.now();
     const version = this.buffer.version;
     const posts = this.buffer.latest(this.options.maxPosts);
@@ -102,6 +110,7 @@ export class SuggestionPipeline {
           game: context.game,
           posts: batch,
           toneExamples: context.toneExamples,
+          replyTo: context.replyTo,
         }),
     );
 

@@ -1,8 +1,9 @@
 import type { ThinkingMode } from "./thinkingMode.js";
+import type { SearchMode } from "./searchMode.js";
 
 export type { ThinkingMode };
 
-export type Source = "x" | "reddit";
+export type Source = "x" | "reddit" | "news";
 
 export interface SocialPost {
   id: string;
@@ -12,6 +13,7 @@ export interface SocialPost {
   url: string;
   publishedAt: string;
   collectedAt: string;
+  rank?: number;
 }
 
 export type SuggestionStyle = "safe" | "funny" | "spicy";
@@ -30,7 +32,7 @@ export interface SuggestionDeck {
   generatedAt: string;
   sourcePostCount: number;
   bufferVersion: number;
-  mode: "gemini" | "demo";
+  mode: "gemini" | "local";
   thinkingMode: ThinkingMode;
 }
 
@@ -44,7 +46,8 @@ export interface BatchResult {
 }
 
 export interface CollectorDetails {
-  mode: "browserbase" | "demo";
+  mode: "browserbase" | "google-news";
+  searchMode: SearchMode;
   sessionId?: string;
   debugUrl?: string;
 }
@@ -56,10 +59,12 @@ export interface Collector {
 }
 
 export interface SuggestionGenerator {
-  readonly mode: "gemini" | "demo";
+  readonly mode: "gemini" | "local";
+  readonly lastError?: string;
   generateBatch(input: {
     game: string;
     posts: SocialPost[];
     toneExamples: string[];
+    replyTo: string;
   }): Promise<BatchResult>;
 }

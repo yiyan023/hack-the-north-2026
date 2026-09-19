@@ -1,6 +1,7 @@
 const API_BASE = "http://localhost:3000";
 const elements = {
   game: document.querySelector("#game"),
+  replyTo: document.querySelector("#reply-to"),
   tone: document.querySelector("#tone"),
   thinkingMode: document.querySelector("#thinking-mode"),
   sourceX: document.querySelector("#source-x"),
@@ -18,8 +19,9 @@ const elements = {
 let generatedAt;
 let thinkingMode;
 
-chrome.storage.local.get(["game", "tone", "thinkingMode"], (saved) => {
+chrome.storage.local.get(["game", "replyTo", "tone", "thinkingMode"], (saved) => {
   if (saved.game) elements.game.value = saved.game;
+  if (saved.replyTo) elements.replyTo.value = saved.replyTo;
   if (saved.tone) elements.tone.value = saved.tone;
   if (saved.thinkingMode) elements.thinkingMode.value = saved.thinkingMode;
 });
@@ -50,15 +52,21 @@ elements.start.addEventListener("click", async () => {
       .map((line) => line.trim())
       .filter(Boolean);
     const thinkingMode = elements.thinkingMode.value;
+    const replyTo = elements.replyTo.value.trim();
     const response = await fetch(`${API_BASE}/api/session/start`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ game, sources, toneExamples, thinkingMode }),
+      body: JSON.stringify({ game, sources, toneExamples, replyTo, thinkingMode }),
     });
     const payload = await response.json();
     if (!response.ok) throw new Error(payload.error || "Could not start session");
 
-    chrome.storage.local.set({ game, tone: elements.tone.value, thinkingMode });
+    chrome.storage.local.set({
+      game,
+      replyTo,
+      tone: elements.tone.value,
+      thinkingMode,
+    });
     setStatus(payload.collectorMode === "demo" ? "Demo is live" : "Watching live", true);
     if (payload.browserbaseDebugUrl) {
       elements.debugLink.href = payload.browserbaseDebugUrl;

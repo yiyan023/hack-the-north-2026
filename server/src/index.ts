@@ -8,7 +8,7 @@ app.listen(config.port, () => {
   console.log(`Using env file: ${config.envPath}`);
   console.log(`BROWSERBASE_API_KEY ${maskSecret(config.browserbaseApiKey)}`);
   console.log(`GEMINI_API_KEY ${maskSecret(config.geminiApiKey)}`);
-  if (!config.browserbaseApiKey || !config.geminiApiKey || config.forceDemoMode) {
-    console.log("Running with demo components for any missing API keys.");
+  if (!config.browserbaseApiKey || !config.geminiApiKey) {
+    console.warn("Real collection requires both Browserbase and Gemini API keys.");
   }
 });

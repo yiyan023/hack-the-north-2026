@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="dark" />
+    <title>iK(no)w Ball</title>
+    <link rel="stylesheet" href="/styles.css" />
+    <script src="/app.js" defer></script>
+  </head>
+  <body>
+    <main class="page-shell">
+      <header class="hero">
+        <div>
+          <p class="eyebrow">LIVE SPORTS COPILOT</p>
+          <h1>iK<span>(no)</span>w Ball</h1>
+          <p class="subtitle">Pick a game. Borrow the internet's ball knowledge.</p>
+        </div>
+        <div class="server-status"><span id="server-dot" class="dot"></span><span id="server-label">Checking server…</span></div>
+      </header>
+
+      <div class="app-grid">
+        <section class="panel setup" aria-labelledby="setup-title">
+          <div class="section-heading">
+            <p class="step">01</p>
+            <div><h2 id="setup-title">Choose the conversation</h2><p>Include a year for historical games.</p></div>
+          </div>
+
+          <label for="game">Game or sports topic</label>
+          <input id="game" placeholder="Argentina vs France 2022 World Cup Final" autocomplete="off" />
+          <p class="field-hint">Best results: both teams + competition, then an optional player or date.</p>
+          <div class="examples" aria-label="Example games">
+            <button type="button" data-game="Arsenal vs Chelsea">Arsenal vs Chelsea</button>
+            <button type="button" data-game="Argentina vs France 2022 World Cup Final">World Cup 2022</button>
+            <button type="button" data-game="Warriors vs Cavaliers 2016 NBA Finals">NBA Finals 2016</button>
+          </div>
+
+          <fieldset>
+            <legend>Sources</legend>
+            <label class="check"><input id="source-x" type="checkbox" /> X</label>
+            <label class="check"><input id="source-reddit" type="checkbox" /> Reddit</label>
+            <label class="check"><input id="source-news" type="checkbox" checked /> Public news <small>no key</small></label>
+          </fieldset>
+
+          <label for="reply-to">Message to reply to <small>mock the latest group-chat message</small></label>
+          <textarea id="reply-to" rows="2" placeholder="Why are they still playing him?"></textarea>
+
+          <label for="tone">Your tone examples <small>one per line</small></label>
+          <textarea id="tone" rows="3" placeholder="bro is absolutely finished&#10;we are so back"></textarea>
+
+          <label for="thinking-mode">Thinking mode <small>source context used for suggestions</small></label>
+          <select id="thinking-mode">
+            <option value="fast">Fast · 2 posts per reply</option>
+            <option value="medium" selected>Medium · 10 posts per reply</option>
+            <option value="deep">Deep · 30 posts per reply</option>
+          </select>
+
+          <div class="actions">
+            <button id="start" class="primary" type="button">Start watching</button>
+            <button id="stop" class="secondary" type="button" disabled>Stop</button>
+          </div>
+          <a id="debug-link" class="debug-link hidden" target="_blank" rel="noreferrer">Open Browserbase session</a>
+          <p id="notice" class="notice" role="alert"></p>
+        </section>
+
+        <section class="panel output" aria-labelledby="output-title">
+          <div class="section-heading output-heading">
+            <p class="step">02</p>
+            <div><h2 id="output-title">Pick your line</h2><p id="session-meta">Start a session to generate suggestions.</p></div>
+            <button id="refresh" class="icon-button" type="button" disabled aria-label="Refresh suggestions">↻</button>
+          </div>
+
+          <div class="status-row">
+            <span id="status-dot" class="dot"></span>
+            <span id="status">Not started</span>
+            <span id="updated"></span>
+          </div>
+          <div id="moment" class="moment">The strongest current talking point will appear here.</div>
+          <div id="suggestions" class="suggestions" aria-live="polite">
+            <div class="empty-state">No suggestions yet.</div>
+          </div>
+        </section>
+      </div>
+
+      <section class="panel evidence" aria-labelledby="evidence-title">
+        <div class="section-heading">
+          <p class="step">03</p>
+          <div><h2 id="evidence-title">What we actually pulled</h2><p id="evidence-meta">Use this to verify the suggestions are grounded in the selected game.</p></div>
+        </div>
+        <div id="posts" class="post-grid" aria-live="polite">
+          <div class="empty-state">Collected posts will appear here.</div>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>

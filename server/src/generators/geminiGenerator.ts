@@ -64,6 +64,7 @@ export class GeminiGenerator implements SuggestionGenerator {
     game: string;
     posts: SocialPost[];
     toneExamples: string[];
+    replyTo: string;
   }): Promise<BatchResult> {
     const posts = input.posts
       .map(
@@ -80,7 +81,11 @@ export class GeminiGenerator implements SuggestionGenerator {
       `You are writing live group-chat reactions for ${input.game}.`,
       "Use only claims supported by the supplied posts. Do not invent scores, injuries, or events.",
       "Return one safe, one funny, and one spicy suggestion. Each must be at most 12 words.",
+      "Write each suggestion as a natural message someone would actually send. Never prefix it with 'on', quote the message being answered, or restate that message.",
       "Match the user's tone without copying an example verbatim. Avoid slurs and targeted harassment.",
+      input.replyTo
+        ? `Directly answer or react to this group-chat message: ${input.replyTo}`
+        : "Write a relevant standalone reaction.",
       "Tone examples:",
       tone,
       "Recent posts:",

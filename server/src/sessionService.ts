@@ -1,8 +1,9 @@
 import { config } from "./config.js";
 import { BrowserbaseCollector } from "./collectors/browserbaseCollector.js";
-import { DemoCollector } from "./collectors/demoCollector.js";
-import { DemoGenerator } from "./generators/demoGenerator.js";
+import { GoogleNewsCollector } from "./collectors/googleNewsCollector.js";
+import { EvidenceGenerator } from "./generators/evidenceGenerator.js";
 import { GeminiGenerator } from "./generators/geminiGenerator.js";
+import { ResilientGenerator } from "./generators/resilientGenerator.js";
 import { RollingPostBuffer } from "./rollingBuffer.js";
 import { SuggestionPipeline } from "./suggestionPipeline.js";
 import { pipelineLimitsForThinkingMode } from "./thinkingMode.js";
@@ -21,13 +22,16 @@ export class SessionService {
   private status: Status = "idle";
   private game = "";
   private toneExamples: string[] = [];
+  private replyTo = "";
   private sources: Source[] = [];
   private thinkingMode: ThinkingMode = "medium";
   private collector?: Collector;
+  private generator?: SuggestionGenerator;
   private details?: CollectorDetails;
   private timer?: NodeJS.Timeout;
   private polling = false;
   private lastPollAt?: string;
+  private lastPollAdded = 0;
   private lastError?: string;
   private readonly buffer = new RollingPostBuffer(config.bufferSize);
   private pipeline?: SuggestionPipeline;
@@ -36,6 +40,7 @@ export class SessionService {
     game: string;
     sources: Source[];
     toneExamples: string[];
+    replyTo: string;
     thinkingMode: ThinkingMode;
   }) {
     await this.stop();
@@ -43,23 +48,40 @@ export class SessionService {
     this.game = input.game;
     this.sources = input.sources;
     this.toneExamples = input.toneExamples;
+    this.replyTo = input.replyTo;
     this.thinkingMode = input.thinkingMode;
     this.buffer.clear();
+    this.details = undefined;
+    this.lastPollAdded = 0;
     this.lastError = undefined;
 
-    const useDemoCollector = config.forceDemoMode || !config.browserbaseApiKey;
-    const useDemoGenerator = config.forceDemoMode || !config.geminiApiKey;
-    this.collector = useDemoCollector
-      ? new DemoCollector()
-      : new BrowserbaseCollector(config.browserbaseApiKey);
-    const generator: SuggestionGenerator = useDemoGenerator
-      ? new DemoGenerator()
-      : new GeminiGenerator(config.geminiApiKey, config.geminiModel);
+    const onlyPublicNews = this.sources.every((source) => source === "news");
+    if (!onlyPublicNews && !config.browserbaseApiKey) {
+      throw new Error("X and Reddit require BROWSERBASE_API_KEY. Select Public news for the keyless real-data path.");
+    }
+
+    this.collector = onlyPublicNews
+      ? new GoogleNewsCollector()
+      : new BrowserbaseCollector(
+          config.browserbaseApiKey,
+          config.browserbaseContextId,
+        );
+    const localGenerator = new EvidenceGenerator();
+    this.generator = config.geminiApiKey
+      ? new ResilientGenerator(
+          new GeminiGenerator(config.geminiApiKey, config.geminiModel),
+          localGenerator,
+        )
+      : localGenerator;
 
     this.pipeline = new SuggestionPipeline(
       this.buffer,
-      generator,
-      () => ({ game: this.game, toneExamples: this.toneExamples }),
+      this.generator,
+      () => ({
+        game: this.game,
+        toneExamples: this.toneExamples,
+        replyTo: this.replyTo,
+      }),
       {
         ...pipelineLimitsForThinkingMode(this.thinkingMode, {
           postsPerBatch: config.postsPerBatch,
@@ -109,21 +131,36 @@ export class SessionService {
     return this.pipeline?.request(true);
   }
 
+  posts(limit = 12) {
+    return this.buffer.latest(Math.min(Math.max(1, limit), 50));
+  }
+
   snapshot() {
     return {
       status: this.status,
       game: this.game,
       sources: this.sources,
       collectorMode: this.details?.mode,
-      generatorMode: this.pipeline?.latest?.mode ??
-        (config.forceDemoMode || !config.geminiApiKey ? "demo" : "gemini"),
+      searchMode: this.details?.searchMode,
+      generatorMode: this.pipeline?.latest?.mode ?? this.generator?.mode,
       browserbaseSessionId: this.details?.sessionId,
       browserbaseDebugUrl: this.details?.debugUrl,
       postCount: this.buffer.size,
       bufferVersion: this.buffer.version,
       generationRunning: this.pipeline?.isRunning ?? false,
       lastPollAt: this.lastPollAt,
-      lastError: this.lastError,
+      lastPollAdded: this.lastPollAdded,
+      sourceCounts: this.buffer.latest(config.bufferSize).reduce(
+        (counts, post) => {
+          counts[post.source] += 1;
+          return counts;
+        },
+        { x: 0, reddit: 0, news: 0 },
+      ),
+      lastError: this.lastError ?? this.pipeline?.lastError,
+      providerWarning: this.generator?.lastError
+        ? "Gemini rejected its credential; using local copy grounded only in the displayed evidence."
+        : undefined,
       pollIntervalMs: config.pollIntervalMs,
       thinkingMode: this.thinkingMode,
       maxPosts: pipelineLimitsForThinkingMode(this.thinkingMode, {
@@ -139,6 +176,7 @@ export class SessionService {
     try {
       const posts = await this.collector.collect();
       const added = this.buffer.add(posts);
+      this.lastPollAdded = added;
       this.lastPollAt = new Date().toISOString();
       this.lastError = undefined;
       if (added > 0) void this.pipeline?.request(false);

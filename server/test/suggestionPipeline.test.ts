@@ -24,7 +24,7 @@ describe("SuggestionPipeline", () => {
     const batchSizes: number[] = [];
 
     const generator: SuggestionGenerator = {
-      mode: "demo",
+      mode: "gemini",
       async generateBatch(input) {
         batchSizes.push(input.posts.length);
         active += 1;
@@ -46,7 +46,7 @@ describe("SuggestionPipeline", () => {
     const pipeline = new SuggestionPipeline(
       buffer,
       generator,
-      () => ({ game: "test game", toneExamples: [] }),
+      () => ({ game: "test game", toneExamples: [], replyTo: "" }),
       {
         thinkingMode: "deep",
         postsPerBatch: 10,
@@ -72,7 +72,7 @@ describe("SuggestionPipeline", () => {
     const batchSizes: number[] = [];
 
     const generator: SuggestionGenerator = {
-      mode: "demo",
+      mode: "gemini",
       async generateBatch(input) {
         batchSizes.push(input.posts.length);
         return {
@@ -90,7 +90,7 @@ describe("SuggestionPipeline", () => {
     const pipeline = new SuggestionPipeline(
       buffer,
       generator,
-      () => ({ game: "test game", toneExamples: [] }),
+      () => ({ game: "test game", toneExamples: [], replyTo: "" }),
       {
         thinkingMode: "fast",
         postsPerBatch: 2,
@@ -106,5 +106,47 @@ describe("SuggestionPipeline", () => {
     expect(batchSizes).toEqual([2]);
     expect(deck?.sourcePostCount).toBe(2);
     expect(deck?.thinkingMode).toBe("fast");
+  });
+
+  it("sends ten posts to Gemini in medium mode", async () => {
+    const buffer = new RollingPostBuffer(100);
+    buffer.add(posts(25));
+    const batchSizes: number[] = [];
+
+    const generator: SuggestionGenerator = {
+      mode: "gemini",
+      async generateBatch(input) {
+        batchSizes.push(input.posts.length);
+        return {
+          moment: "medium moment",
+          confidence: 0.7,
+          suggestions: [
+            { style: "safe", text: "safe message" },
+            { style: "funny", text: "funny message" },
+            { style: "spicy", text: "spicy message" },
+          ],
+        };
+      },
+    };
+
+    const pipeline = new SuggestionPipeline(
+      buffer,
+      generator,
+      () => ({ game: "test game", toneExamples: [], replyTo: "" }),
+      {
+        thinkingMode: "medium",
+        postsPerBatch: 10,
+        maxPosts: 10,
+        concurrency: 3,
+        minIntervalMs: 1,
+        minNewPosts: 5,
+        maxAgeMs: 1,
+      },
+    );
+
+    const deck = await pipeline.request();
+    expect(batchSizes).toEqual([10]);
+    expect(deck?.sourcePostCount).toBe(10);
+    expect(deck?.thinkingMode).toBe("medium");
   });
 });

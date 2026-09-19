@@ -1,12 +1,14 @@
 import cors from "cors";
 import express from "express";
+import path from "node:path";
 import { z } from "zod";
 import { SessionService } from "./sessionService.js";
 
 const startSchema = z.object({
   game: z.string().trim().min(2).max(120),
-  sources: z.array(z.enum(["x", "reddit"])).min(1).max(2).default(["x"]),
+  sources: z.array(z.enum(["x", "reddit", "news"])).min(1).max(3).default(["news"]),
   toneExamples: z.array(z.string().trim().min(1).max(280)).max(10).default([]),
+  replyTo: z.string().trim().max(1_000).default(""),
   thinkingMode: z.enum(["fast", "medium", "deep"]).default("medium"),
 });
 
@@ -14,6 +16,7 @@ export function createApp(session = new SessionService()) {
   const app = express();
   app.use(cors({ origin: true }));
   app.use(express.json({ limit: "100kb" }));
+  app.use(express.static(path.resolve(process.cwd(), "web")));
 
   app.get("/health", (_request, response) => {
     response.json({ ok: true });
@@ -37,6 +40,15 @@ export function createApp(session = new SessionService()) {
 
   app.get("/api/session/status", (_request, response) => {
     response.json(session.snapshot());
+  });
+
+  app.get("/api/posts", (request, response) => {
+    const rawLimit = Array.isArray(request.query.limit)
+      ? request.query.limit[0]
+      : request.query.limit;
+    const parsedLimit = Number.parseInt(String(rawLimit ?? "12"), 10);
+    const limit = Number.isFinite(parsedLimit) ? parsedLimit : 12;
+    response.json({ posts: session.posts(limit) });
   });
 
   app.post("/api/session/stop", async (_request, response) => {

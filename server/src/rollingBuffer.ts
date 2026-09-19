@@ -29,11 +29,13 @@ export class RollingPostBuffer {
     if (unique.length === 0) return 0;
 
     this.posts = [...unique, ...this.posts]
-      .sort(
-        (a, b) =>
-          Date.parse(b.publishedAt || b.collectedAt) -
-          Date.parse(a.publishedAt || a.collectedAt),
-      )
+      .sort((a, b) => {
+        if (a.rank !== undefined || b.rank !== undefined) {
+          const rankDifference = (a.rank ?? Number.MAX_SAFE_INTEGER) - (b.rank ?? Number.MAX_SAFE_INTEGER);
+          if (rankDifference !== 0) return rankDifference;
+        }
+        return Date.parse(b.publishedAt || b.collectedAt) - Date.parse(a.publishedAt || a.collectedAt);
+      })
       .slice(0, this.capacity);
 
     this.ids = new Set(this.posts.map((post) => post.id));

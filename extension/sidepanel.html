@@ -19,6 +19,9 @@
         <label for="game">What game are you watching?</label>
         <input id="game" placeholder="Arsenal vs. Chelsea" autocomplete="off" />
 
+        <label for="reply-to">Message to reply to <small>optional</small></label>
+        <textarea id="reply-to" rows="2" placeholder="holy this goalie"></textarea>
+
         <fieldset>
           <legend>Sources</legend>
           <label class="check"><input id="source-x" type="checkbox" checked /> X</label>
@@ -30,9 +33,9 @@
 
         <label for="thinking-mode">Thinking mode <small>posts sent to Gemini</small></label>
         <select id="thinking-mode">
-          <option value="fast">Fast · 2 posts</option>
-          <option value="medium" selected>Medium · 10 posts</option>
-          <option value="deep">Deep thinking · 30 posts</option>
+          <option value="fast">Fast · 2 posts per reply</option>
+          <option value="medium" selected>Medium · 10 posts per reply</option>
+          <option value="deep">Deep thinking · 30 posts per reply</option>
         </select>
 
         <button id="start" class="primary">Start watching</button>
