@@ -1,0 +1,25 @@
+{
+  "manifest_version": 3,
+  "name": "iK(no)w Ball",
+  "version": "0.1.0",
+  "description": "Live sports group-chat suggestions powered by current fan reactions.",
+  "minimum_chrome_version": "114",
+  "permissions": ["activeTab", "tabs", "sidePanel", "storage", "clipboardWrite"],
+  "host_permissions": ["http://localhost:3000/*", "https://discord.com/*"],
+  "background": {
+    "service_worker": "service-worker.js"
+  },
+  "action": {
+    "default_title": "Open iK(no)w Ball"
+  },
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://discord.com/*"],
+      "js": ["content-script.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}

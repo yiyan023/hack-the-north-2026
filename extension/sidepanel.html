@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>iK(no)w Ball</title>
+    <link rel="stylesheet" href="sidepanel.css" />
+    <script src="sidepanel.js" defer></script>
+  </head>
+  <body>
+    <main>
+      <header>
+        <p class="eyebrow">LIVE SPORTS COPILOT</p>
+        <h1>iK<span>(no)</span>w Ball</h1>
+        <p class="subtitle">Sound informed. Stay unserious.</p>
+      </header>
+
+      <section class="setup" aria-label="Session setup">
+        <label for="game">What game are you watching?</label>
+        <input id="game" placeholder="Arsenal vs. Chelsea" autocomplete="off" />
+
+        <fieldset>
+          <legend>Sources</legend>
+          <label class="check"><input id="source-x" type="checkbox" checked /> X</label>
+          <label class="check"><input id="source-reddit" type="checkbox" /> Reddit</label>
+        </fieldset>
+
+        <label for="tone">Your tone examples <small>one per line</small></label>
+        <textarea id="tone" rows="3" placeholder="bro is absolutely finished"></textarea>
+
+        <button id="start" class="primary">Start watching</button>
+        <a id="debug-link" class="debug-link hidden" target="_blank" rel="noreferrer">Open Browserbase login</a>
+      </section>
+
+      <section class="results" aria-live="polite">
+        <div class="status-row">
+          <span id="status-dot" class="dot"></span>
+          <span id="status">Not started</span>
+          <span id="updated"></span>
+        </div>
+        <p id="moment" class="moment">Start a session to get live suggestions.</p>
+        <div id="suggestions" class="suggestions"></div>
+        <p id="notice" class="notice"></p>
+      </section>
+    </main>
+  </body>
+</html>
