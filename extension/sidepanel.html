@@ -28,6 +28,13 @@
         <label for="tone">Your tone examples <small>one per line</small></label>
         <textarea id="tone" rows="3" placeholder="bro is absolutely finished"></textarea>
 
+        <label for="thinking-mode">Thinking mode <small>posts sent to Gemini</small></label>
+        <select id="thinking-mode">
+          <option value="fast">Fast · 2 posts</option>
+          <option value="medium" selected>Medium · 10 posts</option>
+          <option value="deep">Deep thinking · 30 posts</option>
+        </select>
+
         <button id="start" class="primary">Start watching</button>
         <a id="debug-link" class="debug-link hidden" target="_blank" rel="noreferrer">Open Browserbase login</a>
       </section>

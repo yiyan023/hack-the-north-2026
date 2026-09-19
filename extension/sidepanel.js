@@ -2,6 +2,7 @@ const API_BASE = "http://localhost:3000";
 const elements = {
   game: document.querySelector("#game"),
   tone: document.querySelector("#tone"),
+  thinkingMode: document.querySelector("#thinking-mode"),
   sourceX: document.querySelector("#source-x"),
   sourceReddit: document.querySelector("#source-reddit"),
   start: document.querySelector("#start"),
@@ -15,10 +16,16 @@ const elements = {
 };
 
 let generatedAt;
+let thinkingMode;
 
-chrome.storage.local.get(["game", "tone"], (saved) => {
+chrome.storage.local.get(["game", "tone", "thinkingMode"], (saved) => {
   if (saved.game) elements.game.value = saved.game;
   if (saved.tone) elements.tone.value = saved.tone;
+  if (saved.thinkingMode) elements.thinkingMode.value = saved.thinkingMode;
+});
+
+elements.thinkingMode.addEventListener("change", () => {
+  chrome.storage.local.set({ thinkingMode: elements.thinkingMode.value });
 });
 
 elements.start.addEventListener("click", async () => {
@@ -42,15 +49,16 @@ elements.start.addEventListener("click", async () => {
       .split("\n")
       .map((line) => line.trim())
       .filter(Boolean);
+    const thinkingMode = elements.thinkingMode.value;
     const response = await fetch(`${API_BASE}/api/session/start`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ game, sources, toneExamples }),
+      body: JSON.stringify({ game, sources, toneExamples, thinkingMode }),
     });
     const payload = await response.json();
     if (!response.ok) throw new Error(payload.error || "Could not start session");
 
-    chrome.storage.local.set({ game, tone: elements.tone.value });
+    chrome.storage.local.set({ game, tone: elements.tone.value, thinkingMode });
     setStatus(payload.collectorMode === "demo" ? "Demo is live" : "Watching live", true);
     if (payload.browserbaseDebugUrl) {
       elements.debugLink.href = payload.browserbaseDebugUrl;
@@ -78,6 +86,7 @@ async function refreshSuggestions() {
     }
 
     generatedAt = payload.generatedAt;
+    thinkingMode = payload.thinkingMode;
     elements.moment.textContent = payload.moment;
     elements.suggestions.replaceChildren(
       ...payload.suggestions.map(suggestionButton),
@@ -138,10 +147,20 @@ function showNotice(text) {
   elements.notice.textContent = text;
 }
 
+function thinkingModeLabel(mode) {
+  if (mode === "fast") return "Fast";
+  if (mode === "deep") return "Deep thinking";
+  if (mode === "medium") return "Medium";
+  return "";
+}
+
 function updateAge() {
   if (!generatedAt) return;
   const seconds = Math.max(0, Math.floor((Date.now() - Date.parse(generatedAt)) / 1_000));
-  elements.updated.textContent = `Updated ${seconds}s ago`;
+  const mode = thinkingModeLabel(thinkingMode);
+  elements.updated.textContent = mode
+    ? `Updated ${seconds}s ago · ${mode}`
+    : `Updated ${seconds}s ago`;
 }
 
 setInterval(refreshSuggestions, 3_000);

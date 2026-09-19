@@ -5,12 +5,14 @@ import { DemoGenerator } from "./generators/demoGenerator.js";
 import { GeminiGenerator } from "./generators/geminiGenerator.js";
 import { RollingPostBuffer } from "./rollingBuffer.js";
 import { SuggestionPipeline } from "./suggestionPipeline.js";
+import { pipelineLimitsForThinkingMode } from "./thinkingMode.js";
 import type {
   Collector,
   CollectorDetails,
   Source,
   SuggestionDeck,
   SuggestionGenerator,
+  ThinkingMode,
 } from "./types.js";
 
 type Status = "idle" | "starting" | "collecting" | "stopped" | "error";
@@ -20,6 +22,7 @@ export class SessionService {
   private game = "";
   private toneExamples: string[] = [];
   private sources: Source[] = [];
+  private thinkingMode: ThinkingMode = "medium";
   private collector?: Collector;
   private details?: CollectorDetails;
   private timer?: NodeJS.Timeout;
@@ -33,12 +36,14 @@ export class SessionService {
     game: string;
     sources: Source[];
     toneExamples: string[];
+    thinkingMode: ThinkingMode;
   }) {
     await this.stop();
     this.status = "starting";
     this.game = input.game;
     this.sources = input.sources;
     this.toneExamples = input.toneExamples;
+    this.thinkingMode = input.thinkingMode;
     this.buffer.clear();
     this.lastError = undefined;
 
@@ -56,11 +61,12 @@ export class SessionService {
       generator,
       () => ({ game: this.game, toneExamples: this.toneExamples }),
       {
-        postsPerBatch: config.postsPerBatch,
-        maxPosts: config.maxPostsPerGeneration,
+        ...pipelineLimitsForThinkingMode(this.thinkingMode, {
+          postsPerBatch: config.postsPerBatch,
+          minNewPosts: config.minNewPosts,
+        }),
         concurrency: config.geminiConcurrency,
         minIntervalMs: config.geminiMinIntervalMs,
-        minNewPosts: config.minNewPosts,
         maxAgeMs: config.suggestionMaxAgeMs,
       },
     );
@@ -119,6 +125,11 @@ export class SessionService {
       lastPollAt: this.lastPollAt,
       lastError: this.lastError,
       pollIntervalMs: config.pollIntervalMs,
+      thinkingMode: this.thinkingMode,
+      maxPosts: pipelineLimitsForThinkingMode(this.thinkingMode, {
+        postsPerBatch: config.postsPerBatch,
+        minNewPosts: config.minNewPosts,
+      }).maxPosts,
     };
   }
 

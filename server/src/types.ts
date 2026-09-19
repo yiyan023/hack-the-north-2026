@@ -1,3 +1,7 @@
+import type { ThinkingMode } from "./thinkingMode.js";
+
+export type { ThinkingMode };
+
 export type Source = "x" | "reddit";
 
 export interface SocialPost {
@@ -27,6 +31,7 @@ export interface SuggestionDeck {
   sourcePostCount: number;
   bufferVersion: number;
   mode: "gemini" | "demo";
+  thinkingMode: ThinkingMode;
 }
 
 export interface BatchResult {

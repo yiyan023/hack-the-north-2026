@@ -1,4 +1,24 @@
-import "dotenv/config";
+import dotenv from "dotenv";
+import { existsSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+function resolveEnvPath(): string {
+  const cwdPath = path.resolve(process.cwd(), ".env");
+  if (existsSync(cwdPath)) return cwdPath;
+
+  let dir = path.dirname(fileURLToPath(import.meta.url));
+  for (let i = 0; i < 5; i += 1) {
+    const candidate = path.join(dir, ".env");
+    if (existsSync(candidate)) return candidate;
+    dir = path.dirname(dir);
+  }
+
+  return cwdPath;
+}
+
+export const envPath = resolveEnvPath();
+dotenv.config({ path: envPath });
 
 function integer(name: string, fallback: number): number {
   const parsed = Number.parseInt(process.env[name] ?? "", 10);
@@ -11,7 +31,13 @@ function bool(name: string, fallback: boolean): boolean {
   return value.toLowerCase() === "true";
 }
 
+export function maskSecret(value: string): string {
+  if (!value) return "(empty)";
+  return `set (****${value.slice(-4)}, ${value.length} chars)`;
+}
+
 export const config = {
+  envPath,
   port: integer("PORT", 3000),
   browserbaseApiKey: process.env.BROWSERBASE_API_KEY ?? "",
   geminiApiKey: process.env.GEMINI_API_KEY ?? "",

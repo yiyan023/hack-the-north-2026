@@ -7,6 +7,7 @@ const startSchema = z.object({
   game: z.string().trim().min(2).max(120),
   sources: z.array(z.enum(["x", "reddit"])).min(1).max(2).default(["x"]),
   toneExamples: z.array(z.string().trim().min(1).max(280)).max(10).default([]),
+  thinkingMode: z.enum(["fast", "medium", "deep"]).default("medium"),
 });
 
 export function createApp(session = new SessionService()) {

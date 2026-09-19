@@ -1,4 +1,5 @@
 import type { RollingPostBuffer } from "./rollingBuffer.js";
+import type { ThinkingMode } from "./thinkingMode.js";
 import type {
   BatchResult,
   SocialPost,
@@ -8,6 +9,7 @@ import type {
 } from "./types.js";
 
 interface PipelineOptions {
+  thinkingMode: ThinkingMode;
   postsPerBatch: number;
   maxPosts: number;
   concurrency: number;
@@ -120,6 +122,7 @@ export class SuggestionPipeline {
       sourcePostCount: posts.length,
       bufferVersion: version,
       mode: this.generator.mode,
+      thinkingMode: this.options.thinkingMode,
     };
 
     if (!this.deck || nextDeck.bufferVersion >= this.deck.bufferVersion) {

@@ -48,6 +48,7 @@ describe("SuggestionPipeline", () => {
       generator,
       () => ({ game: "test game", toneExamples: [] }),
       {
+        thinkingMode: "deep",
         postsPerBatch: 10,
         maxPosts: 30,
         concurrency: 3,
@@ -61,5 +62,49 @@ describe("SuggestionPipeline", () => {
     expect(batchSizes.sort((a, b) => b - a)).toEqual([10, 10, 5]);
     expect(maxActive).toBe(3);
     expect(deck?.suggestions).toHaveLength(3);
+    expect(deck?.thinkingMode).toBe("deep");
+    expect(deck?.sourcePostCount).toBe(25);
+  });
+
+  it("sends only two posts to Gemini in fast mode", async () => {
+    const buffer = new RollingPostBuffer(100);
+    buffer.add(posts(25));
+    const batchSizes: number[] = [];
+
+    const generator: SuggestionGenerator = {
+      mode: "demo",
+      async generateBatch(input) {
+        batchSizes.push(input.posts.length);
+        return {
+          moment: "fast moment",
+          confidence: 0.7,
+          suggestions: [
+            { style: "safe", text: "safe message" },
+            { style: "funny", text: "funny message" },
+            { style: "spicy", text: "spicy message" },
+          ],
+        };
+      },
+    };
+
+    const pipeline = new SuggestionPipeline(
+      buffer,
+      generator,
+      () => ({ game: "test game", toneExamples: [] }),
+      {
+        thinkingMode: "fast",
+        postsPerBatch: 2,
+        maxPosts: 2,
+        concurrency: 3,
+        minIntervalMs: 1,
+        minNewPosts: 2,
+        maxAgeMs: 1,
+      },
+    );
+
+    const deck = await pipeline.request();
+    expect(batchSizes).toEqual([2]);
+    expect(deck?.sourcePostCount).toBe(2);
+    expect(deck?.thinkingMode).toBe("fast");
   });
 });
