@@ -119,6 +119,38 @@ describe("SessionService source isolation", () => {
     expect(snapshot.browserbaseSessionUrl).toBeUndefined();
   });
 
+  it("does not tear down a working session when a new source selection is invalid", async () => {
+    const x = fakeCollector("x", []);
+    const news = fakeCollector("news", []);
+    const service = new SessionService(fakeBrowserbase(x), () => news);
+    services.push(service);
+
+    await service.start({
+      game: "Arsenal Chelsea",
+      sources: ["news"],
+      toneExamples: [],
+      replyTo: "",
+      thinkingMode: "fast",
+    });
+
+    await expect(
+      service.start({
+        game: "Invalid mixed test",
+        sources: ["news", "test"],
+        toneExamples: [],
+        replyTo: "",
+        thinkingMode: "fast",
+      }),
+    ).rejects.toThrow("must be selected by itself");
+
+    expect(news.stop).not.toHaveBeenCalled();
+    expect(service.snapshot()).toMatchObject({
+      status: "collecting",
+      game: "Arsenal Chelsea",
+      sources: ["news"],
+    });
+  });
+
   it("waits for every selected source before the first combined poll", async () => {
     let releaseX!: () => void;
     const xReady = new Promise<void>((resolve) => {

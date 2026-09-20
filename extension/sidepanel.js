@@ -67,6 +67,8 @@ async function startSession() {
     return;
   }
 
+  clearInterval(pollTimer);
+  pollTimer = undefined;
   elements.start.disabled = true;
   showNotice("");
   setStatus("Starting source collector…", false);

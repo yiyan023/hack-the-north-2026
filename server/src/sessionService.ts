@@ -110,6 +110,24 @@ export class SessionService {
     replyTo: string;
     thinkingMode: ThinkingMode;
   }) {
+    const onlySynthetic = input.sources.every((source) => source === "test");
+    if (input.sources.includes("test") && !onlySynthetic) {
+      throw new Error("The synthetic test feed must be selected by itself.");
+    }
+    if (onlySynthetic && !config.syntheticFeedEnabled) {
+      throw new Error("Synthetic test feed is disabled. Set ENABLE_TEST_FEED=true for local testing.");
+    }
+    if (
+      input.sources.includes("x") &&
+      !this.browserbaseWasInjected &&
+      !config.browserbaseContextId
+    ) {
+      throw new Error("X requires BROWSERBASE_CONTEXT_ID so a manual login can persist in Browserbase.");
+    }
+    if (input.sources.includes("x") && !this.browserbaseCollector) {
+      throw new Error("X requires BROWSERBASE_API_KEY. Select Public news for the keyless real-data path.");
+    }
+
     const startAt = Date.now();
     await this.stop();
     this.sessionRunId = crypto.randomUUID().slice(0, 8);
@@ -135,24 +153,6 @@ export class SessionService {
     this.lastSentimentCheckAt = 0;
     this.sentimentBaseline = undefined;
     this.lastError = undefined;
-
-    const onlySynthetic = this.sources.every((source) => source === "test");
-    if (this.sources.includes("test") && !onlySynthetic) {
-      throw new Error("The synthetic test feed must be selected by itself.");
-    }
-    if (onlySynthetic && !config.syntheticFeedEnabled) {
-      throw new Error("Synthetic test feed is disabled. Set ENABLE_TEST_FEED=true for local testing.");
-    }
-    if (
-      this.sources.includes("x") &&
-      !this.browserbaseWasInjected &&
-      !config.browserbaseContextId
-    ) {
-      throw new Error("X requires BROWSERBASE_CONTEXT_ID so a manual login can persist in Browserbase.");
-    }
-    if (this.sources.includes("x") && !this.browserbaseCollector) {
-      throw new Error("X requires BROWSERBASE_API_KEY. Select Public news for the keyless real-data path.");
-    }
 
     const localGenerator = new EvidenceGenerator();
     this.generator = config.geminiApiKey

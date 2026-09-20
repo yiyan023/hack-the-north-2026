@@ -53,6 +53,8 @@ async function startSession() {
     return;
   }
 
+  clearInterval(pollTimer);
+  pollTimer = undefined;
   setBusy(true);
   showNotice("");
   setStatus("Starting source collector…", false);
