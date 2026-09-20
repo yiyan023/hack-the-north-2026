@@ -1,5 +1,6 @@
 export type SearchMode = "live" | "historical";
-export type BrowserSource = "x" | "reddit";
+// Reddit support disabled.
+export type BrowserSource = "x";
 
 const YEAR_PATTERN = /\b(?:19|20)\d{2}\b/;
 const HISTORICAL_HINT_PATTERN = /\b(?:historical|classic|throwback|replay)\b/i;
@@ -23,12 +24,8 @@ export function buildSearchUrl(
     return `https://x.com/search?${params.toString()}`;
   }
 
-  const params = new URLSearchParams({
-    q: searchQuery,
-    sort: mode === "historical" ? "relevance" : "new",
-    t: mode === "historical" ? "all" : "day",
-  });
-  return `https://www.reddit.com/search/?${params.toString()}`;
+  // Reddit support disabled.
+  throw new Error("Reddit support is disabled.");
 }
 
 export function normalizeSearchQuery(query: string): string {

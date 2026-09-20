@@ -4,7 +4,7 @@ const elements = {
   tone: document.querySelector("#tone"),
   thinkingMode: document.querySelector("#thinking-mode"),
   sourceX: document.querySelector("#source-x"),
-  sourceReddit: document.querySelector("#source-reddit"),
+  // Reddit support disabled.
   sourceNews: document.querySelector("#source-news"),
   sourceTest: document.querySelector("#source-test"),
   start: document.querySelector("#start"),
@@ -44,7 +44,6 @@ async function startSession() {
   const game = elements.game.value.trim();
   const sources = [
     elements.sourceX.checked ? "x" : null,
-    elements.sourceReddit.checked ? "reddit" : null,
     elements.sourceNews.checked ? "news" : null,
     elements.sourceTest?.checked ? "test" : null,
   ].filter(Boolean);
@@ -219,11 +218,11 @@ function empty(message) {
 }
 
 function renderSessionMeta(payload) {
-  const sourceCounts = payload.sourceCounts ?? { x: 0, reddit: 0, news: 0, test: 0 };
+  const sourceCounts = payload.sourceCounts ?? { x: 0, news: 0, test: 0 };
   const mode = payload.searchMode === "historical" ? "Historical relevance" : "Live / recent";
   const providers = `${payload.collectorMode ?? "collector"} + ${payload.generatorMode ?? "generator"}`;
   const lifecycle = `Pending ${payload.pendingPostCount ?? 0} · Processing ${payload.inFlightPostCount ?? 0} · Context ${payload.recentContextCount ?? 0}`;
-  elements.sessionMeta.textContent = `${mode} · ${payload.postCount ?? 0} posts · ${lifecycle} · X ${sourceCounts.x} · Reddit ${sourceCounts.reddit} · News ${sourceCounts.news} · Test ${sourceCounts.test ?? 0} · ${providers}`;
+  elements.sessionMeta.textContent = `${mode} · ${payload.postCount ?? 0} posts · ${lifecycle} · X ${sourceCounts.x} · News ${sourceCounts.news} · Test ${sourceCounts.test ?? 0} · ${providers}`;
 }
 
 function configureDebugLink(url) {
@@ -286,7 +285,6 @@ function saveForm() {
     tone: elements.tone.value,
     thinkingMode: elements.thinkingMode.value,
     sourceX: elements.sourceX.checked,
-    sourceReddit: elements.sourceReddit.checked,
     sourceNews: elements.sourceNews.checked,
   }));
 }
@@ -301,7 +299,6 @@ function restoreForm() {
     elements.thinkingMode.value = saved.thinkingMode ?? "medium";
     const migrated = !("sourceNews" in saved);
     elements.sourceX.checked = migrated ? false : Boolean(saved.sourceX);
-    elements.sourceReddit.checked = migrated ? false : Boolean(saved.sourceReddit);
     elements.sourceNews.checked = migrated ? true : saved.sourceNews !== false;
   } catch {
     localStorage.removeItem("iknowball-form");

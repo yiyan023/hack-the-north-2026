@@ -7,7 +7,7 @@ import { SessionService } from "./sessionService.js";
 
 const startSchema = z.object({
   game: z.string().trim().min(2).max(120),
-  sources: z.array(z.enum(["x", "reddit", "news", "test"])).min(1).max(3).default(["news"]),
+  sources: z.array(z.enum(["x", "news", "test"])).min(1).max(3).default(["news"]),
   toneExamples: z.array(z.string().trim().min(1).max(280)).max(10).default([]),
   replyTo: z.string().trim().max(1_000).default(""),
   thinkingMode: z.enum(["fast", "medium", "deep"]).default("medium"),

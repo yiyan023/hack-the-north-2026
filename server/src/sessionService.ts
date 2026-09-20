@@ -88,7 +88,7 @@ export class SessionService {
       throw new Error("X requires BROWSERBASE_CONTEXT_ID so a manual login can persist in Browserbase.");
     }
     if (!onlyPublicNews && !config.browserbaseApiKey) {
-      throw new Error("X and Reddit require BROWSERBASE_API_KEY. Select Public news for the keyless real-data path.");
+      throw new Error("X requires BROWSERBASE_API_KEY. Select Public news for the keyless real-data path.");
     }
 
     this.collector = onlySynthetic
@@ -220,7 +220,7 @@ export class SessionService {
           counts[post.source] += 1;
           return counts;
         },
-        { x: 0, reddit: 0, news: 0, test: 0 },
+        { x: 0, news: 0, test: 0 },
       ),
       lastError: this.lastError ?? this.pipeline?.lastError,
       providerWarning: this.generator?.lastError

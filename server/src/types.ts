@@ -3,7 +3,8 @@ import type { SearchMode } from "./searchMode.js";
 
 export type { ThinkingMode };
 
-export type Source = "x" | "reddit" | "news" | "test";
+// Reddit support disabled.
+export type Source = "x" | "news" | "test";
 
 export interface SocialPost {
   id: string;

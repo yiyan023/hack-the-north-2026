@@ -7,7 +7,7 @@ const elements = {
   tone: document.querySelector("#tone"),
   thinkingMode: document.querySelector("#thinking-mode"),
   sourceX: document.querySelector("#source-x"),
-  sourceReddit: document.querySelector("#source-reddit"),
+  // Reddit support disabled.
   sourceNews: document.querySelector("#source-news"),
   sourceTest: document.querySelector("#source-test"),
   start: document.querySelector("#start"),
@@ -29,10 +29,9 @@ let generatedAt;
 let thinkingMode;
 let pollTimer;
 
-chrome.storage.local.get(["game", "replyTo", "tone", "thinkingMode", "sourceX", "sourceReddit", "sourceNews", "sourceTest"], (saved) => {
+chrome.storage.local.get(["game", "replyTo", "tone", "thinkingMode", "sourceX", "sourceNews", "sourceTest"], (saved) => {
   if (saved.thinkingMode) elements.thinkingMode.value = saved.thinkingMode;
   if (typeof saved.sourceX === "boolean") elements.sourceX.checked = saved.sourceX;
-  if (typeof saved.sourceReddit === "boolean") elements.sourceReddit.checked = saved.sourceReddit;
   if (typeof saved.sourceNews === "boolean") elements.sourceNews.checked = saved.sourceNews;
   if (typeof saved.sourceTest === "boolean") elements.sourceTest.checked = saved.sourceTest;
   chrome.storage.local.remove(["game", "replyTo", "tone"]);
@@ -58,7 +57,6 @@ async function startSession() {
   const game = elements.game.value.trim();
   const sources = [
     elements.sourceX.checked ? "x" : null,
-    elements.sourceReddit.checked ? "reddit" : null,
     elements.sourceNews.checked ? "news" : null,
     elements.sourceTest.checked ? "test" : null,
   ].filter(Boolean);
@@ -94,7 +92,6 @@ async function startSession() {
       tone: elements.tone.value,
       thinkingMode: selectedThinkingMode,
       sourceX: elements.sourceX.checked,
-      sourceReddit: elements.sourceReddit.checked,
       sourceNews: elements.sourceNews.checked,
       sourceTest: elements.sourceTest.checked,
     });
@@ -217,10 +214,10 @@ function empty(message) {
 }
 
 function renderSessionMeta(payload) {
-  const counts = payload.sourceCounts ?? { x: 0, reddit: 0, news: 0, test: 0 };
+  const counts = payload.sourceCounts ?? { x: 0, news: 0, test: 0 };
   const mode = payload.searchMode === "historical" ? "Historical relevance" : "Live / recent";
   const lifecycle = `Pending ${payload.pendingPostCount ?? 0} · Processing ${payload.inFlightPostCount ?? 0} · Context ${payload.recentContextCount ?? 0}`;
-  elements.sessionMeta.textContent = `${mode} · ${payload.postCount ?? 0} posts · ${lifecycle} · X ${counts.x} · Reddit ${counts.reddit} · News ${counts.news} · Test ${counts.test ?? 0} · ${payload.collectorMode ?? "collector"} + ${payload.generatorMode ?? "generator"}`;
+  elements.sessionMeta.textContent = `${mode} · ${payload.postCount ?? 0} posts · ${lifecycle} · X ${counts.x} · News ${counts.news} · Test ${counts.test ?? 0} · ${payload.collectorMode ?? "collector"} + ${payload.generatorMode ?? "generator"}`;
 }
 
 function configureDebugLink(url) {
