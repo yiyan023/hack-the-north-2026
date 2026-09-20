@@ -25,6 +25,7 @@ export class SuggestionPipeline {
   private lastAttemptAt = 0;
   private lastGeneratedVersion = 0;
   private generationError?: string;
+  private usedPostIds = new Set<string>();
 
   constructor(
     private readonly buffer: RollingPostBuffer,
@@ -98,7 +99,11 @@ export class SuggestionPipeline {
     this.generationError = undefined;
     this.lastAttemptAt = Date.now();
     const version = this.buffer.version;
-    const posts = this.buffer.latest(this.options.maxPosts);
+    const posts = selectDiversePosts(
+      this.buffer.latest(Number.MAX_SAFE_INTEGER),
+      this.options.maxPosts,
+      this.usedPostIds,
+    );
     const batches = chunk(posts, this.options.postsPerBatch);
     const context = this.getContext();
 
@@ -137,6 +142,7 @@ export class SuggestionPipeline {
     if (!this.deck || nextDeck.bufferVersion >= this.deck.bufferVersion) {
       this.deck = nextDeck;
       this.lastGeneratedVersion = version;
+      for (const post of posts) this.usedPostIds.add(post.id);
     }
     return this.deck;
   }
@@ -194,4 +200,46 @@ function withoutTrailingPeriod(text: string) {
   return text.trim().replace(/\.+$/, "");
 }
 
-export const testing = { chunk, mapWithConcurrency, pickSuggestions };
+function selectDiversePosts(
+  allPosts: SocialPost[],
+  maximum: number,
+  usedPostIds: Set<string>,
+): SocialPost[] {
+  const unseen = allPosts.filter((post) => !usedPostIds.has(post.id));
+  // Once every buffered post has appeared in a generation, start a new cycle.
+  if (unseen.length === 0) usedPostIds.clear();
+
+  const fresh = unseen.length === 0 ? allPosts : unseen;
+  const freshIds = new Set(fresh.map((post) => post.id));
+  // Use every unseen item first, then fill any remaining slots from older
+  // evidence so a partial new poll still has enough context to generate from.
+  const candidates = fresh.length >= maximum
+    ? fresh
+    : [...fresh, ...allPosts.filter((post) => !freshIds.has(post.id))];
+  return roundRobinSources(candidates, maximum);
+}
+
+function roundRobinSources(posts: SocialPost[], maximum: number): SocialPost[] {
+  const queues = new Map<SocialPost["source"], SocialPost[]>();
+  for (const post of posts) {
+    const queue = queues.get(post.source) ?? [];
+    queue.push(post);
+    queues.set(post.source, queue);
+  }
+
+  const selected: SocialPost[] = [];
+  while (selected.length < maximum) {
+    let added = false;
+    for (const queue of queues.values()) {
+      const post = queue.shift();
+      if (!post) continue;
+      selected.push(post);
+      added = true;
+      if (selected.length === maximum) break;
+    }
+    if (!added) break;
+  }
+  return selected;
+}
+
+export const testing = { chunk, mapWithConcurrency, pickSuggestions, selectDiversePosts };

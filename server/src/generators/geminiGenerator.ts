@@ -85,6 +85,7 @@ export class GeminiGenerator implements SuggestionGenerator {
       "Return one safe, one funny, and one spicy suggestion. Each must be at most 12 words.",
       "Write each suggestion as a natural message someone would actually send. Never prefix it with 'on', quote the message being answered, or restate/paraphrase its wording.",
       "Discord history is context, not copy. Do not repeat the last message or its distinctive wording. Add a fresh, evidence-grounded observation instead; make all three suggestions meaningfully different.",
+      "Use different evidence or angles across the three suggestions; do not produce synonyms of one reaction.",
       "Match the user's tone without copying an example verbatim. Avoid slurs and targeted harassment.",
       input.replyTo
         ? `This is the recent Discord chat history. Use it only to understand the conversation's topic and tone; do not quote, mirror, or paraphrase it:\n${input.replyTo}`
