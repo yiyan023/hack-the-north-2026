@@ -1,4 +1,6 @@
+import type { PendingPostQueue } from "./pendingPostQueue.js";
 import type { RollingPostBuffer } from "./rollingBuffer.js";
+import { elapsedMs, logError, logInfo } from "./observability.js";
 import type { ThinkingMode } from "./thinkingMode.js";
 import type {
   BatchResult,
@@ -16,18 +18,22 @@ interface PipelineOptions {
   minIntervalMs: number;
   minNewPosts: number;
   maxAgeMs: number;
+  contextPosts: number;
 }
 
 export class SuggestionPipeline {
   private deck?: SuggestionDeck;
   private running?: Promise<SuggestionDeck | undefined>;
-  private rerunRequested = false;
+  private rerunForced = false;
   private lastAttemptAt = 0;
-  private lastGeneratedVersion = 0;
   private generationError?: string;
+  private drainTimer?: NodeJS.Timeout;
+  private stopped = false;
+  private generationSequence = 0;
 
   constructor(
-    private readonly buffer: RollingPostBuffer,
+    private readonly queue: PendingPostQueue,
+    private readonly recentContext: RollingPostBuffer,
     private readonly generator: SuggestionGenerator,
     private readonly getContext: () => {
       game: string;
@@ -54,91 +60,193 @@ export class SuggestionPipeline {
     return now - Date.parse(this.deck.generatedAt) > this.options.maxAgeMs;
   }
 
-  request(force = false): Promise<SuggestionDeck | undefined> {
+  request(
+    force = false,
+    rerunIfBusy = false,
+  ): Promise<SuggestionDeck | undefined> {
+    if (this.stopped) return Promise.resolve(this.deck);
     if (this.running) {
-      this.rerunRequested = true;
+      this.rerunForced ||= force && rerunIfBusy;
       return this.running;
     }
 
     if (!this.shouldGenerate(force)) return Promise.resolve(this.deck);
+    if (this.drainTimer) clearTimeout(this.drainTimer);
+    this.drainTimer = undefined;
 
-    this.running = this.generate()
+    this.running = this.generate(force)
       .catch((error) => {
         this.generationError = error instanceof Error ? error.message : String(error);
-        console.error("Suggestion generation failed", error);
+        logError("pipeline", "generation.error", error, {
+          game: this.getContext().game,
+          pending: this.queue.pendingSize,
+          inFlight: this.queue.inFlightSize,
+        });
         return this.deck;
       })
       .finally(() => {
         this.running = undefined;
-        if (this.rerunRequested) {
-          this.rerunRequested = false;
-          void this.request(false);
+        const rerunForced = this.rerunForced;
+        this.rerunForced = false;
+        if (this.stopped || this.generationError) return;
+
+        if (rerunForced) {
+          void this.request(true);
+        } else if (this.queue.pendingSize > 0) {
+          this.scheduleDrain();
         }
       });
     return this.running;
   }
 
+  stop(): void {
+    this.stopped = true;
+    if (this.drainTimer) clearTimeout(this.drainTimer);
+    this.drainTimer = undefined;
+  }
+
   private shouldGenerate(force: boolean): boolean {
-    if (this.buffer.size === 0) return false;
+    if (force) {
+      return this.queue.pendingSize > 0 || this.recentContext.size > 0;
+    }
+    if (this.queue.pendingSize === 0) return false;
     const now = Date.now();
-    if (!force && now - this.lastAttemptAt < this.options.minIntervalMs) {
+    if (now - this.lastAttemptAt < this.options.minIntervalMs) {
       return false;
     }
 
-    const newPosts = this.buffer.version - this.lastGeneratedVersion;
     return (
-      force ||
-      (!this.deck && newPosts >= this.options.minNewPosts) ||
-      newPosts >= this.options.minNewPosts ||
-      (newPosts > 0 && this.isStale(now))
+      this.queue.pendingSize >= this.options.minNewPosts ||
+      (this.queue.pendingSize > 0 && this.isStale(now))
     );
   }
 
-  private async generate(): Promise<SuggestionDeck | undefined> {
+  private async generate(force: boolean): Promise<SuggestionDeck | undefined> {
+    const generationAt = Date.now();
+    const generationId = `${++this.generationSequence}`;
     this.generationError = undefined;
     this.lastAttemptAt = Date.now();
-    const version = this.buffer.version;
-    const posts = this.buffer.latest(this.options.maxPosts);
-    const batches = chunk(posts, this.options.postsPerBatch);
-    const context = this.getContext();
-
-    const results = await mapWithConcurrency(
-      batches,
-      this.options.concurrency,
-      (batch) =>
-        this.generator.generateBatch({
-          game: context.game,
-          posts: batch,
-          toneExamples: context.toneExamples,
-          replyTo: context.replyTo,
-        }),
-    );
-
-    if (results.length === 0) return this.deck;
-
-    const suggestions = pickSuggestions(results);
-    const strongest = [...results].sort((a, b) => b.confidence - a.confidence)[0];
-    if (!strongest || suggestions.length !== 3) return this.deck;
-
-    const nextDeck: SuggestionDeck = {
-      game: context.game,
-      moment: strongest.moment,
-      confidence:
-        results.reduce((total, result) => total + result.confidence, 0) /
-        results.length,
-      suggestions,
-      generatedAt: new Date().toISOString(),
-      sourcePostCount: posts.length,
-      bufferVersion: version,
-      mode: this.generator.mode,
-      thinkingMode: this.options.thinkingMode,
-    };
-
-    if (!this.deck || nextDeck.bufferVersion >= this.deck.bufferVersion) {
-      this.deck = nextDeck;
-      this.lastGeneratedVersion = version;
+    const version = this.queue.version;
+    const posts = this.queue.claim(this.options.maxPosts);
+    const contextPosts = this.recentContext.latest(this.options.contextPosts);
+    if (posts.length === 0 && (!force || contextPosts.length === 0)) {
+      return this.deck;
     }
-    return this.deck;
+
+    const batches = posts.length > 0
+      ? chunk(posts, this.options.postsPerBatch)
+      : [[]];
+    const context = this.getContext();
+    const waits = posts.map((post) =>
+      Math.max(0, Date.now() - Date.parse(post.collectedAt)),
+    );
+    logInfo("pipeline", "generation.begin", {
+      generationId,
+      game: context.game,
+      force,
+      newPosts: posts.length,
+      contextPosts: contextPosts.length,
+      batches: batches.length,
+      pendingAfterClaim: this.queue.pendingSize,
+      queueWaitOldestMs: waits.length > 0 ? Math.max(...waits) : 0,
+      queueWaitNewestMs: waits.length > 0 ? Math.min(...waits) : 0,
+    });
+
+    try {
+      const results = await mapWithConcurrency(
+        batches.map((batch, index) => ({ batch, index })),
+        this.options.concurrency,
+        async ({ batch, index }) => {
+          const batchAt = Date.now();
+          const traceId = `${generationId}:${index + 1}`;
+          logInfo("pipeline", "batch.begin", {
+            generationId,
+            traceId,
+            batch: index + 1,
+            posts: batch.length,
+          });
+          const result = await this.generator.generateBatch({
+            game: context.game,
+            posts: batch,
+            contextPosts,
+            traceId,
+            toneExamples: context.toneExamples,
+            replyTo: context.replyTo,
+          });
+          logInfo("pipeline", "batch.end", {
+            generationId,
+            traceId,
+            batch: index + 1,
+            posts: batch.length,
+            durationMs: elapsedMs(batchAt),
+          });
+          return result;
+        },
+      );
+
+      const selectionAt = Date.now();
+      const suggestions = pickSuggestions(results);
+      const strongest = [...results].sort((a, b) => b.confidence - a.confidence)[0];
+      if (!strongest || suggestions.length !== 3) {
+        throw new Error("Suggestion generation returned an incomplete result.");
+      }
+
+      const acknowledged = this.queue.acknowledge(posts);
+      this.recentContext.add(acknowledged);
+      const nextDeck: SuggestionDeck = {
+        game: context.game,
+        moment: strongest.moment,
+        confidence:
+          results.reduce((total, result) => total + result.confidence, 0) /
+          results.length,
+        suggestions,
+        generatedAt: new Date().toISOString(),
+        sourcePostCount: posts.length + contextPosts.length,
+        bufferVersion: version,
+        mode: this.generator.mode,
+        thinkingMode: this.options.thinkingMode,
+      };
+
+      if (!this.deck || nextDeck.bufferVersion >= this.deck.bufferVersion) {
+        this.deck = nextDeck;
+      }
+      logInfo("pipeline", "generation.end", {
+        generationId,
+        game: context.game,
+        newPosts: posts.length,
+        contextPosts: contextPosts.length,
+        suggestions: suggestions.length,
+        selectionDurationMs: elapsedMs(selectionAt),
+        durationMs: elapsedMs(generationAt),
+        pending: this.queue.pendingSize,
+        recent: this.recentContext.size,
+      });
+      return this.deck;
+    } catch (error) {
+      this.queue.retry(posts);
+      logError("pipeline", "generation.retry", error, {
+        generationId,
+        game: context.game,
+        returnedToPending: posts.length,
+        durationMs: elapsedMs(generationAt),
+      });
+      throw error;
+    }
+  }
+
+  private scheduleDrain(): void {
+    if (this.drainTimer || this.stopped) return;
+    const elapsed = Date.now() - this.lastAttemptAt;
+    const delay = Math.max(0, this.options.minIntervalMs - elapsed);
+    logInfo("pipeline", "drain.scheduled", {
+      game: this.getContext().game,
+      pending: this.queue.pendingSize,
+      delayMs: delay,
+    });
+    this.drainTimer = setTimeout(() => {
+      this.drainTimer = undefined;
+      void this.request(true);
+    }, delay);
   }
 }
 

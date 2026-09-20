@@ -219,7 +219,8 @@ function empty(message) {
 function renderSessionMeta(payload) {
   const counts = payload.sourceCounts ?? { x: 0, reddit: 0, news: 0, test: 0 };
   const mode = payload.searchMode === "historical" ? "Historical relevance" : "Live / recent";
-  elements.sessionMeta.textContent = `${mode} · ${payload.postCount ?? 0} posts · X ${counts.x} · Reddit ${counts.reddit} · News ${counts.news} · Test ${counts.test ?? 0} · ${payload.collectorMode ?? "collector"} + ${payload.generatorMode ?? "generator"}`;
+  const lifecycle = `Pending ${payload.pendingPostCount ?? 0} · Processing ${payload.inFlightPostCount ?? 0} · Context ${payload.recentContextCount ?? 0}`;
+  elements.sessionMeta.textContent = `${mode} · ${payload.postCount ?? 0} posts · ${lifecycle} · X ${counts.x} · Reddit ${counts.reddit} · News ${counts.news} · Test ${counts.test ?? 0} · ${payload.collectorMode ?? "collector"} + ${payload.generatorMode ?? "generator"}`;
 }
 
 function configureDebugLink(url) {

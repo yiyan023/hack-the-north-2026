@@ -1,5 +1,6 @@
 import { Browserbase } from "@browserbasehq/sdk";
 import { chromium, type Browser, type Page } from "playwright-core";
+import { elapsedMs, logError, logInfo, logWarn } from "../observability.js";
 import { buildSearchUrl, classifySearchMode } from "../searchMode.js";
 import type {
   Collector,
@@ -14,6 +15,7 @@ export class BrowserbaseCollector implements Collector {
   private browser?: Browser;
   private pages = new Map<Source, Page>();
   private hasCollectedLoadedPages = false;
+  private collectionSequence = 0;
 
   constructor(apiKey: string, contextId = "") {
     this.client = new Browserbase({ apiKey });
@@ -21,7 +23,9 @@ export class BrowserbaseCollector implements Collector {
   }
 
   async start(query: string, sources: Source[]): Promise<CollectorDetails> {
+    const startAt = Date.now();
     this.hasCollectedLoadedPages = false;
+    this.collectionSequence = 0;
     const searchMode = classifySearchMode(query);
     const browserSources = sources.filter(
       (source): source is "x" | "reddit" => source === "x" || source === "reddit",
@@ -29,10 +33,14 @@ export class BrowserbaseCollector implements Collector {
     if (browserSources.length === 0) {
       throw new Error("Select X or Reddit before starting Browserbase.");
     }
-    console.log(
-      `[browserbase] creating session query="${query}" sources=${browserSources.join(",")} context=${this.contextId ? "configured" : "missing"} persist=false`,
-    );
+    logInfo("browserbase", "collector.start.begin", {
+      query,
+      sources: browserSources.join(","),
+      context: this.contextId ? "configured" : "missing",
+      persist: false,
+    });
     let session;
+    const createAt = Date.now();
     try {
       session = await this.client.sessions.create(
         this.contextId
@@ -49,7 +57,9 @@ export class BrowserbaseCollector implements Collector {
       );
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      console.error(`[browserbase] session creation failed: ${message}`);
+      logError("browserbase", "session.create.error", error, {
+        durationMs: elapsedMs(createAt),
+      });
       if (/401|unauthorized/i.test(message)) {
         throw new Error(
           "Browserbase rejected BROWSERBASE_API_KEY (401). Add a current Dashboard API key to .env.",
@@ -57,20 +67,35 @@ export class BrowserbaseCollector implements Collector {
       }
       throw error;
     }
-    console.log(`[browserbase] session created id=${session.id}`);
+    logInfo("browserbase", "session.create.end", {
+      sessionId: session.id,
+      durationMs: elapsedMs(createAt),
+    });
+
+    const connectAt = Date.now();
     this.browser = await chromium.connectOverCDP(session.connectUrl);
+    logInfo("browserbase", "cdp.connect.end", {
+      sessionId: session.id,
+      durationMs: elapsedMs(connectAt),
+    });
 
     const context = this.browser.contexts()[0];
     if (!context) throw new Error("Browserbase returned no browser context");
 
     const existingPage = context.pages()[0];
     for (const [index, source] of browserSources.entries()) {
+      const navigationAt = Date.now();
       const page = index === 0 && existingPage ? existingPage : await context.newPage();
       await page.goto(buildSearchUrl(source, query, searchMode), {
         waitUntil: "domcontentloaded",
         timeout: 30_000,
       });
-      console.log(`[browserbase] navigated source=${source} url=${page.url()}`);
+      logInfo("browserbase", "navigation.domcontentloaded", {
+        sessionId: session.id,
+        source,
+        url: page.url(),
+        durationMs: elapsedMs(navigationAt),
+      });
       if (source === "x") {
         await this.waitForXResults(page);
       }
@@ -78,14 +103,28 @@ export class BrowserbaseCollector implements Collector {
     }
 
     let debugUrl: string | undefined;
+    const debugAt = Date.now();
     try {
       const debug = await this.client.sessions.debug(session.id);
       debugUrl = debug.debuggerFullscreenUrl;
-      console.log(`[browserbase] debug link ready session=${session.id}`);
-    } catch {
-      console.warn(`[browserbase] debug link unavailable session=${session.id}`);
+      logInfo("browserbase", "debug-link.end", {
+        sessionId: session.id,
+        durationMs: elapsedMs(debugAt),
+      });
+    } catch (error) {
+      logWarn("browserbase", "debug-link.unavailable", {
+        sessionId: session.id,
+        durationMs: elapsedMs(debugAt),
+        error: error instanceof Error ? error.message : String(error),
+      });
       // Collection still works if a debug URL cannot be created.
     }
+
+    logInfo("browserbase", "collector.start.end", {
+      sessionId: session.id,
+      sources: browserSources.join(","),
+      durationMs: elapsedMs(startAt),
+    });
 
     return {
       mode: "browserbase",
@@ -103,32 +142,60 @@ export class BrowserbaseCollector implements Collector {
     // receive fresh posts.
     const shouldReload = this.hasCollectedLoadedPages;
     this.hasCollectedLoadedPages = true;
-    console.log(`[browserbase] poll started sources=${[...this.pages.keys()].join(",")}`);
+    const collectionId = ++this.collectionSequence;
+    const collectAt = Date.now();
+    logInfo("browserbase", "collect.begin", {
+      collectionId,
+      sources: [...this.pages.keys()].join(","),
+      reload: shouldReload,
+    });
     const results = await Promise.allSettled(
       [...this.pages.entries()].map(async ([source, page]) => {
+        const sourceAt = Date.now();
         if (shouldReload) {
-          console.log(`[browserbase] reloading source=${source} url=${page.url()}`);
+          const reloadAt = Date.now();
           await page.reload({ waitUntil: "domcontentloaded", timeout: 30_000 });
-          console.log(`[browserbase] loaded source=${source} url=${page.url()} title="${await page.title()}"`);
+          logInfo("browserbase", "reload.domcontentloaded", {
+            collectionId,
+            source,
+            url: page.url(),
+            durationMs: elapsedMs(reloadAt),
+          });
           if (source === "x") {
             await this.waitForXResults(page);
           }
         }
+        const extractionAt = Date.now();
         const posts = source === "x"
           ? this.extractXPosts(page)
           : this.extractRedditPosts(page);
         const extracted = await posts;
-        console.log(`[browserbase] extracted source=${source} posts=${extracted.length}`);
+        logInfo("browserbase", "extract.end", {
+          collectionId,
+          source,
+          posts: extracted.length,
+          durationMs: elapsedMs(extractionAt),
+          sourceTotalMs: elapsedMs(sourceAt),
+        });
         return extracted;
       }),
     );
 
-    return results.flatMap((result, index) => {
+    const posts = results.flatMap((result, index) => {
       const source = [...this.pages.keys()][index] ?? "unknown";
       if (result.status === "fulfilled") return result.value;
-      console.error(`[browserbase] poll failed source=${source}: ${formatError(result.reason)}`);
+      logError("browserbase", "collect.source.error", result.reason, {
+        collectionId,
+        source,
+      });
       return [];
     });
+    logInfo("browserbase", "collect.end", {
+      collectionId,
+      posts: posts.length,
+      durationMs: elapsedMs(collectAt),
+    });
+    return posts;
   }
 
   async stop(): Promise<void> {
@@ -201,10 +268,16 @@ export class BrowserbaseCollector implements Collector {
   }
 
   private async waitForXResults(page: Page): Promise<void> {
+    const waitAt = Date.now();
     const currentUrl = page.url();
-    console.log(`[browserbase] X check url=${currentUrl}`);
+    logInfo("browserbase", "x-results.wait.begin", { url: currentUrl });
     if (/\/login|\/onboarding\/|mode=login/i.test(currentUrl)) {
-      console.error("[browserbase] X is showing a login/onboarding page; context cookies are not authenticated");
+      logError(
+        "browserbase",
+        "x-results.authentication-required",
+        new Error("X is showing a login or onboarding page"),
+        { url: currentUrl, durationMs: elapsedMs(waitAt) },
+      );
       throw new Error(
         "X is not logged in inside the Browserbase context. Complete one manual X login in a persist:true Browserbase session, close it, and wait a few seconds before retrying.",
       );
@@ -222,14 +295,22 @@ export class BrowserbaseCollector implements Collector {
         .replace(/\s+/g, " ")
         .trim()
         .slice(0, 300);
-      console.error(
-        `[browserbase] X result timeout url=${page.url()} title="${await page.title()}" body="${bodyText}"`,
-      );
+      logError("browserbase", "x-results.wait.error", error, {
+        url: page.url(),
+        title: await page.title(),
+        body: bodyText,
+        durationMs: elapsedMs(waitAt),
+      });
       throw error;
     }
     const articleCount = await page.locator("article").count();
     const tweetCount = await page.locator('[data-testid="tweetText"]').count();
-    console.log(`[browserbase] X results detected articles=${articleCount} tweetTexts=${tweetCount}`);
+    logInfo("browserbase", "x-results.wait.end", {
+      url: page.url(),
+      articles: articleCount,
+      tweetTexts: tweetCount,
+      durationMs: elapsedMs(waitAt),
+    });
   }
 
   private async extractRedditPosts(page: Page): Promise<SocialPost[]> {
@@ -264,8 +345,4 @@ export class BrowserbaseCollector implements Collector {
         .filter((post): post is NonNullable<typeof post> => post !== null);
     });
   }
-}
-
-function formatError(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }

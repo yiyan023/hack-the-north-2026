@@ -65,6 +65,8 @@ export interface SuggestionGenerator {
   generateBatch(input: {
     game: string;
     posts: SocialPost[];
+    contextPosts?: SocialPost[];
+    traceId?: string;
     toneExamples: string[];
     replyTo: string;
   }): Promise<BatchResult>;

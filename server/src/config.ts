@@ -42,6 +42,7 @@ export const config = {
   bufferSize: integer("BUFFER_SIZE", 100),
   postsPerBatch: integer("POSTS_PER_BATCH", 10),
   maxPostsPerGeneration: integer("MAX_POSTS_PER_GENERATION", 30),
+  geminiContextPosts: integer("GEMINI_CONTEXT_POSTS", 3),
   geminiConcurrency: integer("GEMINI_CONCURRENCY", 3),
   geminiMinIntervalMs: integer("GEMINI_MIN_INTERVAL_MS", 20_000),
   minNewPosts: integer("MIN_NEW_POSTS", 5),

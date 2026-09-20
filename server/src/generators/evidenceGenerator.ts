@@ -10,10 +10,14 @@ export class EvidenceGenerator implements SuggestionGenerator {
   async generateBatch(input: {
     game: string;
     posts: SocialPost[];
+    contextPosts?: SocialPost[];
+    traceId?: string;
     toneExamples: string[];
     replyTo: string;
   }): Promise<BatchResult> {
-    const headlines = input.posts.map((post) => cleanHeadline(post.text));
+    const headlines = [...input.posts, ...(input.contextPosts ?? [])].map((post) =>
+      cleanHeadline(post.text),
+    );
     const first = headlines[0] || input.game;
     const second = headlines[1] || first;
     const third = headlines[2] || second;

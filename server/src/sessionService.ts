@@ -5,7 +5,9 @@ import { SyntheticCollector } from "./collectors/syntheticCollector.js";
 import { EvidenceGenerator } from "./generators/evidenceGenerator.js";
 import { GeminiGenerator } from "./generators/geminiGenerator.js";
 import { ResilientGenerator } from "./generators/resilientGenerator.js";
+import { PendingPostQueue } from "./pendingPostQueue.js";
 import { RollingPostBuffer } from "./rollingBuffer.js";
+import { elapsedMs, logError, logInfo } from "./observability.js";
 import { SuggestionPipeline } from "./suggestionPipeline.js";
 import { pipelineLimitsForThinkingMode } from "./thinkingMode.js";
 import { aggregateSentiment, isMajorSentimentChange } from "./sentiment.js";
@@ -37,7 +39,10 @@ export class SessionService {
   private lastSentimentCheckAt = 0;
   private sentimentBaseline?: number;
   private lastError?: string;
-  private readonly buffer = new RollingPostBuffer(config.bufferSize);
+  private sessionRunId = "idle";
+  private pollSequence = 0;
+  private readonly pendingQueue = new PendingPostQueue(config.bufferSize);
+  private readonly recentContext = new RollingPostBuffer(config.bufferSize);
   private pipeline?: SuggestionPipeline;
 
   async start(input: {
@@ -47,15 +52,24 @@ export class SessionService {
     replyTo: string;
     thinkingMode: ThinkingMode;
   }) {
-    console.log(`[session] start requested game="${input.game}" sources=${input.sources.join(",")} thinking=${input.thinkingMode}`);
+    const startAt = Date.now();
     await this.stop();
+    this.sessionRunId = crypto.randomUUID().slice(0, 8);
+    this.pollSequence = 0;
+    logInfo("session", "start.begin", {
+      runId: this.sessionRunId,
+      game: input.game,
+      sources: input.sources.join(","),
+      thinkingMode: input.thinkingMode,
+    });
     this.status = "starting";
     this.game = input.game;
     this.sources = input.sources;
     this.toneExamples = input.toneExamples;
     this.replyTo = input.replyTo;
     this.thinkingMode = input.thinkingMode;
-    this.buffer.clear();
+    this.pendingQueue.clear();
+    this.recentContext.clear();
     this.details = undefined;
     this.lastPollAdded = 0;
     this.lastSentimentCheckAt = 0;
@@ -94,7 +108,8 @@ export class SessionService {
       : localGenerator;
 
     this.pipeline = new SuggestionPipeline(
-      this.buffer,
+      this.pendingQueue,
+      this.recentContext,
       this.generator,
       () => ({
         game: this.game,
@@ -109,26 +124,44 @@ export class SessionService {
         concurrency: config.geminiConcurrency,
         minIntervalMs: onlySynthetic ? 0 : config.geminiMinIntervalMs,
         maxAgeMs: config.suggestionMaxAgeMs,
+        contextPosts: config.geminiContextPosts,
       },
     );
 
     try {
+      const collectorAt = Date.now();
       this.details = await this.collector.start(this.game, this.sources);
-      console.log(`[session] collector started mode=${this.details.mode} session=${this.details.sessionId ?? "none"}`);
+      logInfo("session", "collector.start.end", {
+        runId: this.sessionRunId,
+        mode: this.details.mode,
+        sessionId: this.details.sessionId ?? "none",
+        durationMs: elapsedMs(collectorAt),
+      });
       this.status = "collecting";
       await this.pollOnce();
       this.timer = setInterval(() => void this.pollOnce(), config.pollIntervalMs);
+      logInfo("session", "start.end", {
+        runId: this.sessionRunId,
+        pending: this.pendingQueue.pendingSize,
+        inFlight: this.pendingQueue.inFlightSize,
+        recent: this.recentContext.size,
+        durationMs: elapsedMs(startAt),
+      });
       return this.snapshot();
     } catch (error) {
       this.status = "error";
       this.lastError = error instanceof Error ? error.message : String(error);
-      console.error(`[session] start failed: ${this.lastError}`);
+      logError("session", "start.error", error, {
+        runId: this.sessionRunId,
+        durationMs: elapsedMs(startAt),
+      });
       await this.collector.stop().catch(() => undefined);
       throw error;
     }
   }
 
   async stop() {
+    this.pipeline?.stop();
     if (this.timer) clearInterval(this.timer);
     this.timer = undefined;
     await this.collector?.stop().catch(() => undefined);
@@ -149,20 +182,21 @@ export class SessionService {
   }
 
   async refresh(): Promise<SuggestionDeck | undefined> {
-    return this.pipeline?.request(true);
+    return this.pipeline?.request(true, true);
   }
 
   async updateReplyContext(replyTo: string) {
     this.replyTo = replyTo;
-    if (this.pipeline) void this.pipeline.request(true);
+    if (this.pipeline) void this.pipeline.request(true, true);
     return { ...this.snapshot(), contextUpdated: Boolean(this.pipeline) };
   }
 
   posts(limit = 12) {
-    return this.buffer.latest(Math.min(Math.max(1, limit), 50));
+    return this.allPosts().slice(0, Math.min(Math.max(1, limit), 50));
   }
 
   snapshot() {
+    const allPosts = this.allPosts();
     return {
       status: this.status,
       game: this.game,
@@ -173,12 +207,15 @@ export class SessionService {
       browserbaseSessionId: this.details?.sessionId,
       browserbaseSessionUrl: this.details?.sessionUrl,
       browserbaseDebugUrl: this.details?.debugUrl,
-      postCount: this.buffer.size,
-      bufferVersion: this.buffer.version,
+      postCount: allPosts.length,
+      bufferVersion: this.pendingQueue.version,
+      pendingPostCount: this.pendingQueue.pendingSize,
+      inFlightPostCount: this.pendingQueue.inFlightSize,
+      recentContextCount: this.recentContext.size,
       generationRunning: this.pipeline?.isRunning ?? false,
       lastPollAt: this.lastPollAt,
       lastPollAdded: this.lastPollAdded,
-      sourceCounts: this.buffer.latest(config.bufferSize).reduce(
+      sourceCounts: allPosts.reduce(
         (counts, post) => {
           counts[post.source] += 1;
           return counts;
@@ -201,19 +238,46 @@ export class SessionService {
   private async pollOnce(): Promise<void> {
     if (this.polling || !this.collector) return;
     this.polling = true;
+    const pollId = `${this.sessionRunId}:${++this.pollSequence}`;
     const startedAt = Date.now();
-    console.log("[session] poll started");
+    logInfo("session", "poll.begin", {
+      runId: this.sessionRunId,
+      pollId,
+      pending: this.pendingQueue.pendingSize,
+      inFlight: this.pendingQueue.inFlightSize,
+      recent: this.recentContext.size,
+    });
     try {
+      const collectAt = Date.now();
       const posts = await this.collector.collect();
-      const added = this.buffer.add(posts);
+      const collectorDurationMs = elapsedMs(collectAt);
+      const queueAt = Date.now();
+      const added = this.pendingQueue.add(posts);
+      const queueDurationMs = elapsedMs(queueAt);
       this.lastPollAdded = added;
       this.lastPollAt = new Date().toISOString();
       if (posts.length > 0 || added > 0) this.lastError = undefined;
-      console.log(`[session] poll finished posts=${posts.length} added=${added} buffer=${this.buffer.size} durationMs=${Date.now() - startedAt}`);
-      this.checkSentiment(posts.length > 0);
+      logInfo("session", "poll.end", {
+        runId: this.sessionRunId,
+        pollId,
+        posts: posts.length,
+        added,
+        pending: this.pendingQueue.pendingSize,
+        inFlight: this.pendingQueue.inFlightSize,
+        recent: this.recentContext.size,
+        collectorDurationMs,
+        queueDurationMs,
+        durationMs: elapsedMs(startedAt),
+      });
+      if (added > 0) void this.pipeline?.request(false);
+      this.checkSentiment(added > 0);
     } catch (error) {
       this.lastError = error instanceof Error ? error.message : String(error);
-      console.error("Poll failed", error);
+      logError("session", "poll.error", error, {
+        runId: this.sessionRunId,
+        pollId,
+        durationMs: elapsedMs(startedAt),
+      });
     } finally {
       this.polling = false;
     }
@@ -224,7 +288,7 @@ export class SessionService {
     const now = Date.now();
     if (now - this.lastSentimentCheckAt < config.sentimentRefreshIntervalMs) return;
 
-    const current = aggregateSentiment(this.buffer.latest(config.bufferSize));
+    const current = aggregateSentiment(this.allPosts());
     const previous = this.sentimentBaseline;
     this.lastSentimentCheckAt = now;
     this.sentimentBaseline = current;
@@ -232,7 +296,30 @@ export class SessionService {
       previous !== undefined &&
       isMajorSentimentChange(previous, current, config.sentimentChangeThreshold)
     ) {
-      void this.pipeline.request(true);
+      void this.pipeline.request(true, true);
     }
+  }
+
+  private allPosts() {
+    const posts = [
+      ...this.pendingQueue.pendingPosts(config.bufferSize),
+      ...this.pendingQueue.inFlightPosts(),
+      ...this.recentContext.latest(config.bufferSize),
+    ];
+    const unique = new Map(posts.map((post) => [post.id, post]));
+    return [...unique.values()]
+      .sort((a, b) => {
+        if (a.rank !== undefined || b.rank !== undefined) {
+          const rankDifference =
+            (a.rank ?? Number.MAX_SAFE_INTEGER) -
+            (b.rank ?? Number.MAX_SAFE_INTEGER);
+          if (rankDifference !== 0) return rankDifference;
+        }
+        return (
+          Date.parse(b.publishedAt || b.collectedAt) -
+          Date.parse(a.publishedAt || a.collectedAt)
+        );
+      })
+      .slice(0, config.bufferSize);
   }
 }

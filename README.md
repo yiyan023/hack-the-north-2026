@@ -1,13 +1,14 @@
 # iK(no)w Ball
 
-A live sports group-chat copilot. Browserbase polls X/Reddit search pages, a Node server keeps a rolling in-memory window, and Gemini creates tone-matched reactions in a Chrome side panel that can insert them into Discord. A normal web page remains available as an optional client.
+A live sports group-chat copilot. Browserbase polls X/Reddit search pages, a Node server keeps an in-memory work queue plus a rolling context window, and Gemini creates tone-matched reactions in a Chrome side panel that can insert them into Discord. A normal web page remains available as an optional client.
 
 ## What is implemented
 
 - Browserbase + Playwright collector for X and Reddit search pages
 - Keyless Google News RSS collector for real public evidence
 - Configurable 10–15 second polling (12 seconds by default)
-- Deduplicated 100-post in-memory sliding window
+- Deduplicated pending queue with explicit pending, in-flight, and processed states
+- Bounded recent-context window for conversational continuity
 - Batches of 10 posts, with up to 3 Gemini calls running concurrently
 - Minimum 20 seconds between generation cycles
 - Cached three-suggestion deck for a fast side-panel UI
@@ -20,16 +21,15 @@ A live sports group-chat copilot. Browserbase polls X/Reddit search pages, a Nod
 ## Architecture
 
 1. Browserbase reloads narrow X and/or Reddit searches every 12 seconds.
-2. Node deduplicates results into the rolling buffer.
-3. Once at least five new posts exist, Node selects at most 30 recent posts.
-4. The posts are divided into groups of 10 and processed with bounded parallelism.
-5. Node locally selects the best safe, funny, and spicy result and caches the deck.
-6. The side panel reads the cache every three seconds.
-7. Reading Discord history updates the active reply context and refreshes suggestions.
-8. New posts update the evidence buffer without automatically triggering generation.
-9. Once per minute, the service compares aggregate sentiment with the previous check and refreshes only after a major shift.
-10. Starting a new session or explicitly refreshing also generates a new suggestion deck.
-11. Clicking a suggestion inserts it into Discord or copies it to the clipboard.
+2. Node removes repeated post IDs and normalized duplicate text, then adds new evidence to the pending queue.
+3. A generation cycle claims the configured number of pending posts and marks them in flight.
+4. Gemini receives those new posts plus a small recent-context window and returns safe, funny, and spicy suggestions.
+5. Deep-mode batches may run concurrently; each post is claimed only once.
+6. Successful posts leave the queue and enter recent context. Failed posts return to pending for a later retry.
+7. Posts collected while Gemini is running remain pending and are processed automatically in a follow-up cycle.
+8. Node caches the latest suggestion deck while the side panel checks for updates every three seconds.
+9. Reading Discord history updates the active reply context and can regenerate against recent context without treating old posts as new.
+10. Clicking a suggestion inserts it into Discord or copies it to the clipboard.
 
 The click path never waits for Browserbase or Gemini.
 
@@ -46,6 +46,7 @@ The default Public news source works without an API key and uses real Google New
 - `ENABLE_TEST_FEED=true` to enable the local synthetic feed for end-to-end testing.
 - `SENTIMENT_REFRESH_INTERVAL_MS=60000` controls how often aggregate sentiment is checked.
 - `SENTIMENT_CHANGE_THRESHOLD=0.35` controls how large a sentiment shift must be to refresh.
+- `GEMINI_CONTEXT_POSTS=3` controls how many successfully processed posts are included as background context.
 
 4. Run `npm run dev`.
 
@@ -173,8 +174,8 @@ Leave that terminal open. Visit `http://localhost:3000/health`; it should show
    sending it; press Enter manually when ready.
 
 Fast mode still monitors X every 12 seconds so the context stays current. It
-limits each Gemini request to the latest two posts; it does not stop monitoring
-after two posts.
+claims up to two unprocessed posts for each Gemini request and includes a small
+processed context window; it does not stop monitoring after two posts.
 
 ### Recording troubleshooting
 
@@ -208,6 +209,7 @@ Example session input contains a `game`, a `sources` array containing `x` and/or
 - `npm test`
 - `npm run typecheck`
 - `npm run build`
+- `npm run test:e2e:latency` (requires working Browserbase and Gemini credentials)
 
 ## Scope intentionally deferred
 

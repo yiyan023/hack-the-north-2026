@@ -8,7 +8,8 @@
     "build": "tsc -p tsconfig.json",
     "start": "node dist/index.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:e2e:latency": "tsx scripts/e2eLatencyBenchmark.ts"
   },
   "dependencies": {
     "@browserbasehq/sdk": "^2.20.0",
