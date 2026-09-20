@@ -17,6 +17,7 @@ const elements = {
   statusDot: document.querySelector("#status-dot"),
   updated: document.querySelector("#updated"),
   sessionMeta: document.querySelector("#session-meta"),
+  sourceStatus: document.querySelector("#source-status"),
   moment: document.querySelector("#moment"),
   suggestions: document.querySelector("#suggestions"),
   posts: document.querySelector("#posts"),
@@ -150,7 +151,7 @@ async function refreshStatus() {
   try {
     const payload = await readJson(await fetch(`${API_BASE}/api/session/status`));
     renderSessionMeta(payload);
-    if (payload.providerWarning) showNotice(payload.providerWarning);
+    if (payload.providerWarning) showNotice(payload.providerWarning, "warning");
     else if (payload.lastError) showNotice(payload.lastError);
   } catch {
     setStatus("Server offline", false);
@@ -217,6 +218,28 @@ function renderSessionMeta(payload) {
   const counts = payload.sourceCounts ?? { x: 0, news: 0, test: 0 };
   const mode = payload.searchMode === "historical" ? "Historical relevance" : "Live / recent";
   elements.sessionMeta.textContent = `${mode} · ${payload.postCount ?? 0} posts · X ${counts.x} · News ${counts.news} · Test ${counts.test ?? 0} · ${payload.collectorMode ?? "collector"} + ${payload.generatorMode ?? "generator"}`;
+  renderSourceStatus(payload.sourceStatuses ?? {});
+}
+
+function renderSourceStatus(statuses) {
+  const labels = { x: "X", news: "News", test: "Test feed" };
+  const enabled = Object.keys(labels).filter((source) => statuses[source]?.state !== "idle");
+  elements.sourceStatus.replaceChildren(
+    ...enabled.map((source) => {
+      const status = statuses[source];
+      const chip = document.createElement("span");
+      chip.className = `source-chip ${status.state}`;
+      chip.textContent = `${labels[source]}: ${sourceStateLabel(status)}`;
+      if (status.error) chip.title = status.error;
+      return chip;
+    }),
+  );
+}
+
+function sourceStateLabel(status) {
+  if (status.state === "starting") return "connecting";
+  if (status.state === "error") return "error";
+  return `${status.postCount ?? 0} pulled`;
 }
 
 function configureDebugLink(url) {
@@ -318,6 +341,7 @@ function setStatus(text, live) {
 function showNotice(text, tone = "") {
   elements.notice.textContent = text;
   elements.notice.classList.toggle("success", tone === "success");
+  elements.notice.classList.toggle("warning", tone === "warning");
 }
 
 function thinkingModeLabel(mode) {
