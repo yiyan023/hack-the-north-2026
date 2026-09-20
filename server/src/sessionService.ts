@@ -174,16 +174,9 @@ export class SessionService {
     try {
       const runId = ++this.runId;
       const collectors = this.createCollectors(onlySynthetic);
-      const collectorAt = Date.now();
       await Promise.any(
         collectors.map(({ source, collector }) => this.startCollector(runId, source, collector)),
       );
-      logInfo("session", "collector.start.end", {
-        runId: this.sessionRunId,
-        mode: this.details?.mode,
-        sessionId: this.details?.sessionId ?? "none",
-        durationMs: elapsedMs(collectorAt),
-      });
       this.status = "collecting";
       await this.pollOnce();
       this.timer = setInterval(() => void this.pollOnce(), config.pollIntervalMs);

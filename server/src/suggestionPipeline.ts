@@ -32,9 +32,6 @@ export class SuggestionPipeline {
   private generationSequence = 0;
   private usedPostIds = new Set<string>();
   private recentSuggestionTexts: string[] = [];
-  private drainTimer?: NodeJS.Timeout;
-  private stopped = false;
-  private generationSequence = 0;
 
   constructor(
     private readonly queue: PendingPostQueue,
