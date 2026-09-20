@@ -58,7 +58,7 @@ X and Reddit change their markup regularly. The current selectors are isolated i
 3. Enable Developer mode, click Load unpacked, and select the `extension` folder.
 4. Open Discord Web and enter a channel.
 5. Click the iK(no)w Ball extension icon to open the side panel.
-6. Enter the game, choose X, Reddit, or Public News, add optional tone examples, and click Start watching.
+6. The side panel reads the last 10 visible Discord messages and suggests a game/topic automatically. Edit it if needed, then choose X, Reddit, or Public News, add optional tone examples, and click Start watching.
 7. For reply context, either type a message manually or click **Read last 10 messages** while the target Discord channel is open.
 8. Review the evidence cards, then click a suggestion to insert it into Discord. The extension never sends a message automatically.
 
@@ -160,6 +160,7 @@ after two posts.
 - `GET /api/posts?limit=12`
 - `POST /api/session/stop`
 - `POST /api/session/context`
+- `POST /api/game/infer`
 - `GET /api/suggestions`
 - `POST /api/suggestions/refresh`
 

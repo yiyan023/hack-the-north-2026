@@ -1,6 +1,9 @@
 const API_BASE = "http://localhost:3000";
 const elements = {
   game: document.querySelector("#game"),
+  gameLabel: document.querySelector("#game-label"),
+  gameHint: document.querySelector("#game-hint"),
+  gameLoading: document.querySelector("#game-loading"),
   replyTo: document.querySelector("#reply-to"),
   manualReply: document.querySelector("#manual-reply"),
   readReply: document.querySelector("#read-reply"),
@@ -29,14 +32,14 @@ let thinkingMode;
 let pollTimer;
 
 chrome.storage.local.get(["game", "replyTo", "tone", "thinkingMode", "sourceX", "sourceReddit", "sourceNews"], (saved) => {
-  if (saved.game) elements.game.value = saved.game;
-  if (saved.replyTo) elements.replyTo.value = saved.replyTo;
-  if (saved.tone) elements.tone.value = saved.tone;
   if (saved.thinkingMode) elements.thinkingMode.value = saved.thinkingMode;
   if (typeof saved.sourceX === "boolean") elements.sourceX.checked = saved.sourceX;
   if (typeof saved.sourceReddit === "boolean") elements.sourceReddit.checked = saved.sourceReddit;
   if (typeof saved.sourceNews === "boolean") elements.sourceNews.checked = saved.sourceNews;
+  chrome.storage.local.remove(["game", "replyTo", "tone"]);
 });
+
+void inferGameFromDiscord();
 
 elements.thinkingMode.addEventListener("change", () => {
   chrome.storage.local.set({ thinkingMode: elements.thinkingMode.value });
@@ -304,6 +307,46 @@ async function readRecentMessages() {
   } finally {
     elements.readReply.disabled = false;
   }
+}
+
+async function inferGameFromDiscord() {
+  setGameLoading(true);
+  showNotice("Reading chat history…");
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (!tab?.id || !tab.url?.startsWith("https://discord.com/")) {
+      showNotice("");
+      setGameLoading(false);
+      return;
+    }
+    const result = await sendContentMessage(tab.id, { type: "READ_RECENT_MESSAGES" });
+    if (!result?.ok || !result.messages?.length) {
+      showNotice("No chat history found. Enter a game manually.");
+      return;
+    }
+    if (elements.game.value.trim()) return;
+    const response = await fetch(`${API_BASE}/api/game/infer`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ messages: result.messages }),
+    });
+    const inferred = await readJson(response);
+    if (inferred.game && !elements.game.value.trim()) {
+      elements.game.value = inferred.game;
+      showNotice("Game inferred from your recent Discord messages. You can edit it.", "success");
+    }
+  } catch {
+    showNotice("Could not infer a game from chat history. Enter one manually.");
+  } finally {
+    setGameLoading(false);
+  }
+}
+
+function setGameLoading(loading) {
+  elements.game.disabled = loading;
+  elements.game.style.display = loading ? "none" : "";
+  elements.gameHint.style.display = loading ? "none" : "";
+  elements.gameLoading.style.display = loading ? "block" : "none";
 }
 
 async function copyFallback(text, message) {

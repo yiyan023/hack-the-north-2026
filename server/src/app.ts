@@ -3,6 +3,7 @@ import express from "express";
 import path from "node:path";
 import { z } from "zod";
 import { SessionService } from "./sessionService.js";
+import { inferGame } from "./gameInference.js";
 
 const startSchema = z.object({
   game: z.string().trim().min(2).max(120),
@@ -14,6 +15,10 @@ const startSchema = z.object({
 
 const contextSchema = z.object({
   replyTo: z.string().trim().max(1_000),
+});
+
+const inferGameSchema = z.object({
+  messages: z.array(z.string().trim().min(1).max(500)).min(1).max(10),
 });
 
 export function createApp(session = new SessionService()) {
@@ -66,6 +71,15 @@ export function createApp(session = new SessionService()) {
       return;
     }
     response.json(await session.updateReplyContext(parsed.data.replyTo));
+  });
+
+  app.post("/api/game/infer", async (request, response) => {
+    const parsed = inferGameSchema.safeParse(request.body);
+    if (!parsed.success) {
+      response.status(400).json({ error: parsed.error.flatten() });
+      return;
+    }
+    response.json(await inferGame(parsed.data.messages));
   });
 
   app.get("/api/suggestions", async (_request, response) => {

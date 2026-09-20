@@ -16,9 +16,10 @@
       </header>
 
       <section class="setup" aria-label="Session setup">
-        <label for="game">What game are you watching?</label>
+        <label id="game-label" for="game">What game are you watching?</label>
         <input id="game" placeholder="Arsenal vs. Chelsea" autocomplete="off" />
-        <p class="field-hint">Include a year for a historical game.</p>
+        <p id="game-hint" class="field-hint">Include a year for a historical game.</p>
+        <p id="game-loading" class="game-loading" hidden>Reading chat history…</p>
 
         <label>Message context <small>optional</small></label>
         <div class="reply-actions" role="group" aria-label="Message context source">

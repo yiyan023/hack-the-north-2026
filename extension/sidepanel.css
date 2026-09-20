@@ -62,6 +62,7 @@ select {
 input:focus, textarea:focus, select:focus { border-color: #b4ff39; outline: none; }
 
 .field-hint { color: #777c84; font-size: 11px; margin: -7px 0 13px; }
+.game-loading { color: #b4ff39; font-size: 12px; margin: 7px 0 13px; }
 
 .reply-actions { display: grid; gap: 6px; grid-template-columns: 1fr 1.4fr; margin: 7px 0; }
 .mode-button { background: #202329; border: 1px solid #30343b; color: #aeb2b9; font-size: 11px; padding: 9px 7px; }
