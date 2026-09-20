@@ -8,7 +8,7 @@ import {
 describe("search modes", () => {
   it("uses live feeds for an undated game", () => {
     expect(classifySearchMode("Arsenal vs Chelsea")).toBe("live");
-    expect(buildSearchUrl("x", "Arsenal vs Chelsea")).toContain("f=live");
+    expect(buildSearchUrl("x", "Arsenal vs Chelsea")).not.toContain("f=live");
     expect(buildSearchUrl("reddit", "Arsenal vs Chelsea")).toContain("sort=new");
   });
 

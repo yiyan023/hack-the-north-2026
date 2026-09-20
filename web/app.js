@@ -6,6 +6,7 @@ const elements = {
   sourceX: document.querySelector("#source-x"),
   sourceReddit: document.querySelector("#source-reddit"),
   sourceNews: document.querySelector("#source-news"),
+  sourceTest: document.querySelector("#source-test"),
   start: document.querySelector("#start"),
   stop: document.querySelector("#stop"),
   refresh: document.querySelector("#refresh"),
@@ -45,6 +46,7 @@ async function startSession() {
     elements.sourceX.checked ? "x" : null,
     elements.sourceReddit.checked ? "reddit" : null,
     elements.sourceNews.checked ? "news" : null,
+    elements.sourceTest?.checked ? "test" : null,
   ].filter(Boolean);
 
   if (!game || sources.length === 0) {
@@ -82,7 +84,7 @@ async function startSession() {
     elements.refresh.disabled = false;
     setStatus(payload.collectorMode === "google-news" ? "Public news is polling" : "Browserbase is polling", true);
     renderSessionMeta(payload);
-    configureDebugLink(payload.browserbaseDebugUrl);
+    configureDebugLink(payload.browserbaseSessionUrl || payload.browserbaseDebugUrl);
     await Promise.all([refreshSuggestions(false), refreshEvidence(), refreshStatus()]);
     clearInterval(pollTimer);
     pollTimer = setInterval(() => {
@@ -217,10 +219,10 @@ function empty(message) {
 }
 
 function renderSessionMeta(payload) {
-  const sourceCounts = payload.sourceCounts ?? { x: 0, reddit: 0, news: 0 };
+  const sourceCounts = payload.sourceCounts ?? { x: 0, reddit: 0, news: 0, test: 0 };
   const mode = payload.searchMode === "historical" ? "Historical relevance" : "Live / recent";
   const providers = `${payload.collectorMode ?? "collector"} + ${payload.generatorMode ?? "generator"}`;
-  elements.sessionMeta.textContent = `${mode} · ${payload.postCount ?? 0} posts · X ${sourceCounts.x} · Reddit ${sourceCounts.reddit} · News ${sourceCounts.news} · ${providers}`;
+  elements.sessionMeta.textContent = `${mode} · ${payload.postCount ?? 0} posts · X ${sourceCounts.x} · Reddit ${sourceCounts.reddit} · News ${sourceCounts.news} · Test ${sourceCounts.test ?? 0} · ${providers}`;
 }
 
 function configureDebugLink(url) {

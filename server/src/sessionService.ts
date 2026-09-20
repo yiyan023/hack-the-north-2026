@@ -1,12 +1,14 @@
 import { config } from "./config.js";
 import { BrowserbaseCollector } from "./collectors/browserbaseCollector.js";
 import { GoogleNewsCollector } from "./collectors/googleNewsCollector.js";
+import { SyntheticCollector } from "./collectors/syntheticCollector.js";
 import { EvidenceGenerator } from "./generators/evidenceGenerator.js";
 import { GeminiGenerator } from "./generators/geminiGenerator.js";
 import { ResilientGenerator } from "./generators/resilientGenerator.js";
 import { RollingPostBuffer } from "./rollingBuffer.js";
 import { SuggestionPipeline } from "./suggestionPipeline.js";
 import { pipelineLimitsForThinkingMode } from "./thinkingMode.js";
+import { aggregateSentiment, isMajorSentimentChange } from "./sentiment.js";
 import type {
   Collector,
   CollectorDetails,
@@ -32,6 +34,8 @@ export class SessionService {
   private polling = false;
   private lastPollAt?: string;
   private lastPollAdded = 0;
+  private lastSentimentCheckAt = 0;
+  private sentimentBaseline?: number;
   private lastError?: string;
   private readonly buffer = new RollingPostBuffer(config.bufferSize);
   private pipeline?: SuggestionPipeline;
@@ -43,6 +47,7 @@ export class SessionService {
     replyTo: string;
     thinkingMode: ThinkingMode;
   }) {
+    console.log(`[session] start requested game="${input.game}" sources=${input.sources.join(",")} thinking=${input.thinkingMode}`);
     await this.stop();
     this.status = "starting";
     this.game = input.game;
@@ -53,14 +58,28 @@ export class SessionService {
     this.buffer.clear();
     this.details = undefined;
     this.lastPollAdded = 0;
+    this.lastSentimentCheckAt = 0;
+    this.sentimentBaseline = undefined;
     this.lastError = undefined;
 
+    const onlySynthetic = this.sources.every((source) => source === "test");
     const onlyPublicNews = this.sources.every((source) => source === "news");
+    if (this.sources.includes("test") && !onlySynthetic) {
+      throw new Error("The synthetic test feed must be selected by itself.");
+    }
+    if (onlySynthetic && !config.syntheticFeedEnabled) {
+      throw new Error("Synthetic test feed is disabled. Set ENABLE_TEST_FEED=true for local testing.");
+    }
+    if (this.sources.includes("x") && !config.browserbaseContextId) {
+      throw new Error("X requires BROWSERBASE_CONTEXT_ID so a manual login can persist in Browserbase.");
+    }
     if (!onlyPublicNews && !config.browserbaseApiKey) {
       throw new Error("X and Reddit require BROWSERBASE_API_KEY. Select Public news for the keyless real-data path.");
     }
 
-    this.collector = onlyPublicNews
+    this.collector = onlySynthetic
+      ? new SyntheticCollector()
+      : onlyPublicNews
       ? new GoogleNewsCollector()
       : new BrowserbaseCollector(
           config.browserbaseApiKey,
@@ -85,16 +104,17 @@ export class SessionService {
       {
         ...pipelineLimitsForThinkingMode(this.thinkingMode, {
           postsPerBatch: config.postsPerBatch,
-          minNewPosts: config.minNewPosts,
+          minNewPosts: onlySynthetic ? 1 : config.minNewPosts,
         }),
         concurrency: config.geminiConcurrency,
-        minIntervalMs: config.geminiMinIntervalMs,
+        minIntervalMs: onlySynthetic ? 0 : config.geminiMinIntervalMs,
         maxAgeMs: config.suggestionMaxAgeMs,
       },
     );
 
     try {
       this.details = await this.collector.start(this.game, this.sources);
+      console.log(`[session] collector started mode=${this.details.mode} session=${this.details.sessionId ?? "none"}`);
       this.status = "collecting";
       await this.pollOnce();
       this.timer = setInterval(() => void this.pollOnce(), config.pollIntervalMs);
@@ -102,6 +122,7 @@ export class SessionService {
     } catch (error) {
       this.status = "error";
       this.lastError = error instanceof Error ? error.message : String(error);
+      console.error(`[session] start failed: ${this.lastError}`);
       await this.collector.stop().catch(() => undefined);
       throw error;
     }
@@ -150,6 +171,7 @@ export class SessionService {
       searchMode: this.details?.searchMode,
       generatorMode: this.pipeline?.latest?.mode ?? this.generator?.mode,
       browserbaseSessionId: this.details?.sessionId,
+      browserbaseSessionUrl: this.details?.sessionUrl,
       browserbaseDebugUrl: this.details?.debugUrl,
       postCount: this.buffer.size,
       bufferVersion: this.buffer.version,
@@ -161,7 +183,7 @@ export class SessionService {
           counts[post.source] += 1;
           return counts;
         },
-        { x: 0, reddit: 0, news: 0 },
+        { x: 0, reddit: 0, news: 0, test: 0 },
       ),
       lastError: this.lastError ?? this.pipeline?.lastError,
       providerWarning: this.generator?.lastError
@@ -179,18 +201,38 @@ export class SessionService {
   private async pollOnce(): Promise<void> {
     if (this.polling || !this.collector) return;
     this.polling = true;
+    const startedAt = Date.now();
+    console.log("[session] poll started");
     try {
       const posts = await this.collector.collect();
       const added = this.buffer.add(posts);
       this.lastPollAdded = added;
       this.lastPollAt = new Date().toISOString();
-      this.lastError = undefined;
-      if (added > 0) void this.pipeline?.request(false);
+      if (posts.length > 0 || added > 0) this.lastError = undefined;
+      console.log(`[session] poll finished posts=${posts.length} added=${added} buffer=${this.buffer.size} durationMs=${Date.now() - startedAt}`);
+      this.checkSentiment(posts.length > 0);
     } catch (error) {
       this.lastError = error instanceof Error ? error.message : String(error);
       console.error("Poll failed", error);
     } finally {
       this.polling = false;
+    }
+  }
+
+  private checkSentiment(hasNewPosts: boolean): void {
+    if (!hasNewPosts || !this.pipeline) return;
+    const now = Date.now();
+    if (now - this.lastSentimentCheckAt < config.sentimentRefreshIntervalMs) return;
+
+    const current = aggregateSentiment(this.buffer.latest(config.bufferSize));
+    const previous = this.sentimentBaseline;
+    this.lastSentimentCheckAt = now;
+    this.sentimentBaseline = current;
+    if (
+      previous !== undefined &&
+      isMajorSentimentChange(previous, current, config.sentimentChangeThreshold)
+    ) {
+      void this.pipeline.request(true);
     }
   }
 }

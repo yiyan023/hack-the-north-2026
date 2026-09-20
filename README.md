@@ -26,7 +26,10 @@ A live sports group-chat copilot. Browserbase polls X/Reddit search pages, a Nod
 5. Node locally selects the best safe, funny, and spicy result and caches the deck.
 6. The side panel reads the cache every three seconds.
 7. Reading Discord history updates the active reply context and refreshes suggestions.
-8. Clicking a suggestion inserts it into Discord or copies it to the clipboard.
+8. New posts update the evidence buffer without automatically triggering generation.
+9. Once per minute, the service compares aggregate sentiment with the previous check and refreshes only after a major shift.
+10. Starting a new session or explicitly refreshing also generates a new suggestion deck.
+11. Clicking a suggestion inserts it into Discord or copies it to the clipboard.
 
 The click path never waits for Browserbase or Gemini.
 
@@ -40,6 +43,9 @@ The default Public news source works without an API key and uses real Google New
 
 - `BROWSERBASE_API_KEY`
 - `GEMINI_API_KEY`
+- `ENABLE_TEST_FEED=true` to enable the local synthetic feed for end-to-end testing.
+- `SENTIMENT_REFRESH_INTERVAL_MS=60000` controls how often aggregate sentiment is checked.
+- `SENTIMENT_CHANGE_THRESHOLD=0.35` controls how large a sentiment shift must be to refresh.
 
 4. Run `npm run dev`.
 
@@ -47,7 +53,38 @@ The app never replaces source evidence with demo data. If Gemini rejects its cre
 
 The default model is `gemini-3.8-flash` and can be changed with `GEMINI_MODEL`.
 
-When a real Browserbase session starts, the API and extension return an `Open Browserbase login` link. Use that live browser view to sign into X manually. Never put an X password in `.env` or commit it.
+For an end-to-end test without a live game, set `ENABLE_TEST_FEED=true` in your
+local `.env`, restart the server, select **Synthetic test feed**, and start
+watching. Five realistic setup posts load immediately, followed by staged
+match updates including a goal, stoppage time, and full time. The normal
+polling, generation, evidence, and Discord insertion paths are exercised. The
+synthetic source must be selected by itself and is disabled by default.
+
+For a new X context, create one persistent Browserbase login session manually
+with the curl setup below, open its Browserbase session URL, and sign into X
+inside the remote Browserbase browser. Signing into X in your normal Chrome
+window does not change the Browserbase context.
+Close that setup session after the login is saved. The app's normal collector
+sessions use the same context read-only with `persist: false`. Never put an X
+password in `.env` or commit it.
+
+From the repository root, load your private `.env` values into the current
+terminal and create the setup session:
+
+```bash
+set -a; source .env; set +a
+curl --request POST \
+  --url https://api.browserbase.com/v1/sessions \
+  --header "Content-Type: application/json" \
+  --header "X-BB-API-Key: $BROWSERBASE_API_KEY" \
+  --data "{\"browserSettings\":{\"context\":{\"id\":\"$BROWSERBASE_CONTEXT_ID\",\"persist\":true}},\"keepAlive\":true,\"timeout\":600}"
+```
+
+Copy the returned session `id`, open
+`https://browserbase.com/sessions/<SESSION_ID>`, and sign into X inside the
+displayed Browserbase session. Close the
+setup session after the context has saved the login, then run `npm run dev` and
+use the extension normally.
 
 X and Reddit change their markup regularly. The current selectors are isolated in `server/src/collectors/browserbaseCollector.ts` so they are quick to repair during the hackathon.
 
@@ -58,7 +95,7 @@ X and Reddit change their markup regularly. The current selectors are isolated i
 3. Enable Developer mode, click Load unpacked, and select the `extension` folder.
 4. Open Discord Web and enter a channel.
 5. Click the iK(no)w Ball extension icon to open the side panel.
-6. The side panel reads the last 10 visible Discord messages and suggests a game/topic automatically. Edit it if needed, then choose X, Reddit, or Public News, add optional tone examples, and click Start watching.
+6. Enter the game or sports topic manually, then choose X, Reddit, Public News, or Synthetic test feed, add optional tone examples, and click Start watching.
 7. For reply context, either type a message manually or click **Read last 10 messages** while the target Discord channel is open.
 8. Review the evidence cards, then click a suggestion to insert it into Discord. The extension never sends a message automatically.
 
@@ -91,8 +128,9 @@ Copy these secrets to the other laptop through a private channel. Do not commit
 the `.env` file:
 
 - `BROWSERBASE_API_KEY`: a key for the Browserbase project that owns the context.
-- `BROWSERBASE_CONTEXT_ID`: your own Browserbase context ID for an authenticated
-  X context. Provide it privately through `.env`; do not commit it.
+- `BROWSERBASE_CONTEXT_ID`: your own Browserbase context ID. Provide it privately
+  through `.env`; do not commit it. Use the one-time persistent curl setup to
+  save the manual X login before starting the app.
 - `GEMINI_API_KEY`: a valid key created in Google AI Studio or supplied through
   the hackathon. The key used during the September 19 test returned
   `API_KEY_INVALID`, so generate a fresh key for the recording.
@@ -140,9 +178,9 @@ after two posts.
 
 ### Recording troubleshooting
 
-- **No posts:** open the Browserbase debug link and confirm X search results are
-  visible. If X asks for login, complete one login in a `persist: true` session,
-  close that session, wait several seconds, and restart the demo.
+- **No posts:** open the Browserbase session link. If X asks for login, complete
+  the manual login there and leave the session running until the next poll shows
+  X results. The context uses `persist: true`, so later sessions reuse that login.
 - **Local mode / Gemini warning:** the key is missing or invalid. Replace
   `GEMINI_API_KEY`, then restart `npm run dev` and start a new watching session.
 - **Suggestion copies instead of inserting:** keep Discord Web as the active tab,
@@ -160,7 +198,6 @@ after two posts.
 - `GET /api/posts?limit=12`
 - `POST /api/session/stop`
 - `POST /api/session/context`
-- `POST /api/game/infer`
 - `GET /api/suggestions`
 - `POST /api/suggestions/refresh`
 

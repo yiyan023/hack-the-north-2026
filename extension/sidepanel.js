@@ -1,9 +1,6 @@
 const API_BASE = "http://localhost:3000";
 const elements = {
   game: document.querySelector("#game"),
-  gameLabel: document.querySelector("#game-label"),
-  gameHint: document.querySelector("#game-hint"),
-  gameLoading: document.querySelector("#game-loading"),
   replyTo: document.querySelector("#reply-to"),
   manualReply: document.querySelector("#manual-reply"),
   readReply: document.querySelector("#read-reply"),
@@ -12,6 +9,7 @@ const elements = {
   sourceX: document.querySelector("#source-x"),
   sourceReddit: document.querySelector("#source-reddit"),
   sourceNews: document.querySelector("#source-news"),
+  sourceTest: document.querySelector("#source-test"),
   start: document.querySelector("#start"),
   stop: document.querySelector("#stop"),
   refresh: document.querySelector("#refresh"),
@@ -31,15 +29,14 @@ let generatedAt;
 let thinkingMode;
 let pollTimer;
 
-chrome.storage.local.get(["game", "replyTo", "tone", "thinkingMode", "sourceX", "sourceReddit", "sourceNews"], (saved) => {
+chrome.storage.local.get(["game", "replyTo", "tone", "thinkingMode", "sourceX", "sourceReddit", "sourceNews", "sourceTest"], (saved) => {
   if (saved.thinkingMode) elements.thinkingMode.value = saved.thinkingMode;
   if (typeof saved.sourceX === "boolean") elements.sourceX.checked = saved.sourceX;
   if (typeof saved.sourceReddit === "boolean") elements.sourceReddit.checked = saved.sourceReddit;
   if (typeof saved.sourceNews === "boolean") elements.sourceNews.checked = saved.sourceNews;
+  if (typeof saved.sourceTest === "boolean") elements.sourceTest.checked = saved.sourceTest;
   chrome.storage.local.remove(["game", "replyTo", "tone"]);
 });
-
-void inferGameFromDiscord();
 
 elements.thinkingMode.addEventListener("change", () => {
   chrome.storage.local.set({ thinkingMode: elements.thinkingMode.value });
@@ -63,6 +60,7 @@ async function startSession() {
     elements.sourceX.checked ? "x" : null,
     elements.sourceReddit.checked ? "reddit" : null,
     elements.sourceNews.checked ? "news" : null,
+    elements.sourceTest.checked ? "test" : null,
   ].filter(Boolean);
 
   if (!game || sources.length === 0) {
@@ -98,12 +96,13 @@ async function startSession() {
       sourceX: elements.sourceX.checked,
       sourceReddit: elements.sourceReddit.checked,
       sourceNews: elements.sourceNews.checked,
+      sourceTest: elements.sourceTest.checked,
     });
     elements.stop.disabled = false;
     elements.refresh.disabled = false;
-    setStatus(payload.collectorMode === "google-news" ? "Public news is polling" : "Browserbase is polling", true);
+    setStatus(payload.collectorMode === "google-news" ? "Public news is polling" : payload.collectorMode === "synthetic" ? "Synthetic test feed is polling" : "Browserbase is polling", true);
     renderSessionMeta(payload);
-    configureDebugLink(payload.browserbaseDebugUrl);
+    configureDebugLink(payload.browserbaseSessionUrl || payload.browserbaseDebugUrl);
     await Promise.all([refreshSuggestions(false), refreshEvidence(), refreshStatus()]);
     startPolling();
   } catch (error) {
@@ -218,9 +217,9 @@ function empty(message) {
 }
 
 function renderSessionMeta(payload) {
-  const counts = payload.sourceCounts ?? { x: 0, reddit: 0, news: 0 };
+  const counts = payload.sourceCounts ?? { x: 0, reddit: 0, news: 0, test: 0 };
   const mode = payload.searchMode === "historical" ? "Historical relevance" : "Live / recent";
-  elements.sessionMeta.textContent = `${mode} · ${payload.postCount ?? 0} posts · X ${counts.x} · Reddit ${counts.reddit} · News ${counts.news} · ${payload.collectorMode ?? "collector"} + ${payload.generatorMode ?? "generator"}`;
+  elements.sessionMeta.textContent = `${mode} · ${payload.postCount ?? 0} posts · X ${counts.x} · Reddit ${counts.reddit} · News ${counts.news} · Test ${counts.test ?? 0} · ${payload.collectorMode ?? "collector"} + ${payload.generatorMode ?? "generator"}`;
 }
 
 function configureDebugLink(url) {
@@ -307,46 +306,6 @@ async function readRecentMessages() {
   } finally {
     elements.readReply.disabled = false;
   }
-}
-
-async function inferGameFromDiscord() {
-  setGameLoading(true);
-  showNotice("Reading chat history…");
-  try {
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    if (!tab?.id || !tab.url?.startsWith("https://discord.com/")) {
-      showNotice("");
-      setGameLoading(false);
-      return;
-    }
-    const result = await sendContentMessage(tab.id, { type: "READ_RECENT_MESSAGES" });
-    if (!result?.ok || !result.messages?.length) {
-      showNotice("No chat history found. Enter a game manually.");
-      return;
-    }
-    if (elements.game.value.trim()) return;
-    const response = await fetch(`${API_BASE}/api/game/infer`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ messages: result.messages }),
-    });
-    const inferred = await readJson(response);
-    if (inferred.game && !elements.game.value.trim()) {
-      elements.game.value = inferred.game;
-      showNotice("Game inferred from your recent Discord messages. You can edit it.", "success");
-    }
-  } catch {
-    showNotice("Could not infer a game from chat history. Enter one manually.");
-  } finally {
-    setGameLoading(false);
-  }
-}
-
-function setGameLoading(loading) {
-  elements.game.disabled = loading;
-  elements.game.style.display = loading ? "none" : "";
-  elements.gameHint.style.display = loading ? "none" : "";
-  elements.gameLoading.style.display = loading ? "block" : "none";
 }
 
 async function copyFallback(text, message) {

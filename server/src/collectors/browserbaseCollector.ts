@@ -22,11 +22,14 @@ export class BrowserbaseCollector implements Collector {
   async start(query: string, sources: Source[]): Promise<CollectorDetails> {
     const searchMode = classifySearchMode(query);
     const browserSources = sources.filter(
-      (source): source is Exclude<Source, "news"> => source !== "news",
+      (source): source is "x" | "reddit" => source === "x" || source === "reddit",
     );
     if (browserSources.length === 0) {
       throw new Error("Select X or Reddit before starting Browserbase.");
     }
+    console.log(
+      `[browserbase] creating session query="${query}" sources=${browserSources.join(",")} context=${this.contextId ? "configured" : "missing"} persist=false`,
+    );
     let session;
     try {
       session = await this.client.sessions.create(
@@ -35,8 +38,7 @@ export class BrowserbaseCollector implements Collector {
               browserSettings: {
                 context: {
                   id: this.contextId,
-                  // Collection is read-only. Do not let a transient logout or
-                  // verification challenge overwrite the known-good login.
+                  // The one-time login setup persists cookies; collection sessions are read-only.
                   persist: false,
                 },
               },
@@ -45,6 +47,7 @@ export class BrowserbaseCollector implements Collector {
       );
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+      console.error(`[browserbase] session creation failed: ${message}`);
       if (/401|unauthorized/i.test(message)) {
         throw new Error(
           "Browserbase rejected BROWSERBASE_API_KEY (401). Add a current Dashboard API key to .env.",
@@ -52,6 +55,7 @@ export class BrowserbaseCollector implements Collector {
       }
       throw error;
     }
+    console.log(`[browserbase] session created id=${session.id}`);
     this.browser = await chromium.connectOverCDP(session.connectUrl);
 
     const context = this.browser.contexts()[0];
@@ -64,9 +68,7 @@ export class BrowserbaseCollector implements Collector {
         waitUntil: "domcontentloaded",
         timeout: 30_000,
       });
-      if (source === "x") {
-        await this.waitForXResults(page);
-      }
+      console.log(`[browserbase] navigated source=${source} url=${page.url()}`);
       this.pages.set(source, page);
     }
 
@@ -74,7 +76,9 @@ export class BrowserbaseCollector implements Collector {
     try {
       const debug = await this.client.sessions.debug(session.id);
       debugUrl = debug.debuggerFullscreenUrl;
+      console.log(`[browserbase] debug link ready session=${session.id}`);
     } catch {
+      console.warn(`[browserbase] debug link unavailable session=${session.id}`);
       // Collection still works if a debug URL cannot be created.
     }
 
@@ -82,26 +86,36 @@ export class BrowserbaseCollector implements Collector {
       mode: "browserbase",
       searchMode,
       sessionId: session.id,
+      sessionUrl: `https://browserbase.com/sessions/${session.id}`,
       debugUrl,
     };
   }
 
   async collect(): Promise<SocialPost[]> {
+    console.log(`[browserbase] poll started sources=${[...this.pages.keys()].join(",")}`);
     const results = await Promise.allSettled(
       [...this.pages.entries()].map(async ([source, page]) => {
+        console.log(`[browserbase] reloading source=${source} url=${page.url()}`);
         await page.reload({ waitUntil: "domcontentloaded", timeout: 30_000 });
+        console.log(`[browserbase] loaded source=${source} url=${page.url()} title="${await page.title()}"`);
         if (source === "x") {
           await this.waitForXResults(page);
         }
-        return source === "x"
+        const posts = source === "x"
           ? this.extractXPosts(page)
           : this.extractRedditPosts(page);
+        const extracted = await posts;
+        console.log(`[browserbase] extracted source=${source} posts=${extracted.length}`);
+        return extracted;
       }),
     );
 
-    return results.flatMap((result) =>
-      result.status === "fulfilled" ? result.value : [],
-    );
+    return results.flatMap((result, index) => {
+      const source = [...this.pages.keys()][index] ?? "unknown";
+      if (result.status === "fulfilled") return result.value;
+      console.error(`[browserbase] poll failed source=${source}: ${formatError(result.reason)}`);
+      return [];
+    });
   }
 
   async stop(): Promise<void> {
@@ -111,7 +125,7 @@ export class BrowserbaseCollector implements Collector {
   }
 
   private async extractXPosts(page: Page): Promise<SocialPost[]> {
-    return page.locator("article").evaluateAll((articles) => {
+    const posts = await page.locator("article").evaluateAll((articles) => {
       const collectedAt = new Date().toISOString();
       return articles
         .map((article) => {
@@ -142,22 +156,66 @@ export class BrowserbaseCollector implements Collector {
         })
         .filter((post): post is NonNullable<typeof post> => post !== null);
     });
+    if (posts.length > 0) return posts;
+
+    return page.locator('[data-testid="tweetText"]').evaluateAll((tweetTexts) => {
+      const collectedAt = new Date().toISOString();
+      return tweetTexts.flatMap((tweetText) => {
+        const container = tweetText.closest("[data-testid=\"cellInnerDiv\"]") || tweetText.parentElement;
+        const statusLink = container?.querySelector<HTMLAnchorElement>('a[href*="/status/"]');
+        const href = statusLink?.getAttribute("href");
+        const text = tweetText.textContent?.trim();
+        if (!href || !text) return [];
+
+        const time = container?.querySelector<HTMLTimeElement>("time")?.dateTime;
+        const author = container
+          ?.querySelector<HTMLElement>('[data-testid="User-Name"]')
+          ?.innerText.split("\n")[0]
+          ?.trim();
+        const url = new URL(href, "https://x.com").toString();
+        return [{
+          id: `x:${url}`,
+          source: "x" as const,
+          author: author || "unknown",
+          text,
+          url,
+          publishedAt: time || collectedAt,
+          collectedAt,
+        }];
+      });
+    });
   }
 
   private async waitForXResults(page: Page): Promise<void> {
     const currentUrl = page.url();
+    console.log(`[browserbase] X check url=${currentUrl}`);
     if (/\/login|\/onboarding\/|mode=login/i.test(currentUrl)) {
+      console.error("[browserbase] X is showing a login/onboarding page; context cookies are not authenticated");
       throw new Error(
         "X is not logged in inside the Browserbase context. Complete one manual X login in a persist:true Browserbase session, close it, and wait a few seconds before retrying.",
       );
     }
 
-    // X renders search results after DOMContentLoaded. Waiting on the actual
-    // result element prevents an otherwise healthy pull from racing the UI.
-    await page.locator("article").first().waitFor({
-      state: "attached",
-      timeout: 10_000,
-    });
+    // X may render tweet text without article containers depending on its
+    // current client markup. Wait for either result shape.
+    try {
+      await page.locator('article, [data-testid="tweetText"]').first().waitFor({
+        state: "attached",
+        timeout: 30_000,
+      });
+    } catch (error) {
+      const bodyText = (await page.locator("body").innerText().catch(() => ""))
+        .replace(/\s+/g, " ")
+        .trim()
+        .slice(0, 300);
+      console.error(
+        `[browserbase] X result timeout url=${page.url()} title="${await page.title()}" body="${bodyText}"`,
+      );
+      throw error;
+    }
+    const articleCount = await page.locator("article").count();
+    const tweetCount = await page.locator('[data-testid="tweetText"]').count();
+    console.log(`[browserbase] X results detected articles=${articleCount} tweetTexts=${tweetCount}`);
   }
 
   private async extractRedditPosts(page: Page): Promise<SocialPost[]> {
@@ -192,4 +250,8 @@ export class BrowserbaseCollector implements Collector {
         .filter((post): post is NonNullable<typeof post> => post !== null);
     });
   }
+}
+
+function formatError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }

@@ -35,6 +35,7 @@ export const config = {
   port: integer("PORT", 3000),
   browserbaseApiKey: process.env.BROWSERBASE_API_KEY ?? "",
   browserbaseContextId: process.env.BROWSERBASE_CONTEXT_ID ?? "",
+  syntheticFeedEnabled: process.env.ENABLE_TEST_FEED === "true",
   geminiApiKey: process.env.GEMINI_API_KEY ?? "",
   geminiModel: process.env.GEMINI_MODEL ?? "gemini-3.8-flash",
   pollIntervalMs: integer("POLL_INTERVAL_MS", 12_000),
@@ -45,4 +46,6 @@ export const config = {
   geminiMinIntervalMs: integer("GEMINI_MIN_INTERVAL_MS", 20_000),
   minNewPosts: integer("MIN_NEW_POSTS", 5),
   suggestionMaxAgeMs: integer("SUGGESTION_MAX_AGE_MS", 45_000),
+  sentimentRefreshIntervalMs: integer("SENTIMENT_REFRESH_INTERVAL_MS", 60_000),
+  sentimentChangeThreshold: Number.parseFloat(process.env.SENTIMENT_CHANGE_THRESHOLD ?? "0.35") || 0.35,
 };

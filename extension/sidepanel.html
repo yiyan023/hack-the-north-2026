@@ -18,8 +18,7 @@
       <section class="setup" aria-label="Session setup">
         <label id="game-label" for="game">What game are you watching?</label>
         <input id="game" placeholder="Arsenal vs. Chelsea" autocomplete="off" />
-        <p id="game-hint" class="field-hint">Include a year for a historical game.</p>
-        <p id="game-loading" class="game-loading" hidden>Reading chat history…</p>
+        <p class="field-hint">Include a year for a historical game.</p>
 
         <label>Message context <small>optional</small></label>
         <div class="reply-actions" role="group" aria-label="Message context source">
@@ -33,6 +32,7 @@
           <label class="check"><input id="source-x" type="checkbox" checked /> X</label>
           <label class="check"><input id="source-reddit" type="checkbox" /> Reddit</label>
           <label class="check"><input id="source-news" type="checkbox" checked /> News</label>
+          <label class="check"><input id="source-test" type="checkbox" /> Test feed</label>
         </fieldset>
 
         <label for="tone">Your tone examples <small>one per line</small></label>
@@ -49,7 +49,7 @@
           <button id="start" class="primary" type="button">Start watching</button>
           <button id="stop" class="secondary" type="button" disabled>Stop</button>
         </div>
-        <a id="debug-link" class="debug-link hidden" target="_blank" rel="noreferrer">Open Browserbase session</a>
+        <a id="debug-link" class="debug-link hidden" target="_blank" rel="noreferrer">Open Browserbase session to log in</a>
       </section>
 
       <section class="results" aria-live="polite">

@@ -3,7 +3,7 @@ import type { SearchMode } from "./searchMode.js";
 
 export type { ThinkingMode };
 
-export type Source = "x" | "reddit" | "news";
+export type Source = "x" | "reddit" | "news" | "test";
 
 export interface SocialPost {
   id: string;
@@ -46,9 +46,10 @@ export interface BatchResult {
 }
 
 export interface CollectorDetails {
-  mode: "browserbase" | "google-news";
+  mode: "browserbase" | "google-news" | "synthetic";
   searchMode: SearchMode;
   sessionId?: string;
+  sessionUrl?: string;
   debugUrl?: string;
 }
 

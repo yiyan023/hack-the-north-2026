@@ -18,11 +18,8 @@ export function buildSearchUrl(
 ): string {
   const searchQuery = normalizeSearchQuery(query);
   if (source === "x") {
-    const params = new URLSearchParams({
-      q: searchQuery,
-      src: "typed_query",
-      f: mode === "historical" ? "top" : "live",
-    });
+    const params = new URLSearchParams({ q: searchQuery, src: "typed_query" });
+    if (mode === "historical") params.set("f", "top");
     return `https://x.com/search?${params.toString()}`;
   }
 
