@@ -293,9 +293,13 @@ function pickSuggestions(results: BatchResult[]) {
       .sort((a, b) => b.confidence - a.confidence)[0];
 
     return candidate
-      ? [{ id: `${style}-${crypto.randomUUID()}`, style, text: candidate.text }]
+      ? [{ id: `${style}-${crypto.randomUUID()}`, style, text: withoutTrailingPeriod(candidate.text) }]
       : [];
   });
+}
+
+function withoutTrailingPeriod(text: string) {
+  return text.trim().replace(/\.+$/, "");
 }
 
 export const testing = { chunk, mapWithConcurrency, pickSuggestions };
