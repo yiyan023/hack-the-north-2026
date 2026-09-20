@@ -91,8 +91,8 @@ Copy these secrets to the other laptop through a private channel. Do not commit
 the `.env` file:
 
 - `BROWSERBASE_API_KEY`: a key for the Browserbase project that owns the context.
-- `BROWSERBASE_CONTEXT_ID`: `fd285515-74ba-4432-8d63-b9e9d70dc21d` for the
-  currently authenticated X context.
+- `BROWSERBASE_CONTEXT_ID`: your own Browserbase context ID for an authenticated
+  X context. Provide it privately through `.env`; do not commit it.
 - `GEMINI_API_KEY`: a valid key created in Google AI Studio or supplied through
   the hackathon. The key used during the September 19 test returned
   `API_KEY_INVALID`, so generate a fresh key for the recording.
