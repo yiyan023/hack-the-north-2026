@@ -24,10 +24,10 @@ export class BrowserbaseCollector implements Collector {
     this.hasCollectedLoadedPages = false;
     const searchMode = classifySearchMode(query);
     const browserSources = sources.filter(
-      (source): source is "x" | "reddit" => source === "x" || source === "reddit",
+      (source): source is "x" => source === "x",
     );
     if (browserSources.length === 0) {
-      throw new Error("Select X or Reddit before starting Browserbase.");
+      throw new Error("Select X before starting Browserbase.");
     }
     console.log(
       `[browserbase] creating session query="${query}" sources=${browserSources.join(",")} context=${this.contextId ? "configured" : "missing"} persist=false`,
@@ -114,10 +114,7 @@ export class BrowserbaseCollector implements Collector {
             await this.waitForXResults(page);
           }
         }
-        const posts = source === "x"
-          ? this.extractXPosts(page)
-          : this.extractRedditPosts(page);
-        const extracted = await posts;
+        const extracted = await this.extractXPosts(page);
         console.log(`[browserbase] extracted source=${source} posts=${extracted.length}`);
         return extracted;
       }),
@@ -232,38 +229,6 @@ export class BrowserbaseCollector implements Collector {
     console.log(`[browserbase] X results detected articles=${articleCount} tweetTexts=${tweetCount}`);
   }
 
-  private async extractRedditPosts(page: Page): Promise<SocialPost[]> {
-    return page.locator("shreddit-post, article").evaluateAll((elements) => {
-      const collectedAt = new Date().toISOString();
-      return elements
-        .map((element, index) => {
-          const title =
-            element
-              .querySelector<HTMLElement>('a[data-testid="post-title"]')
-              ?.innerText.trim() ||
-            element.querySelector<HTMLElement>("h1, h2, h3")?.innerText.trim();
-          const body = element
-            .querySelector<HTMLElement>('[slot="text-body"], [data-post-click-location="text-body"]')
-            ?.innerText.trim();
-          const link = element.querySelector<HTMLAnchorElement>('a[href*="/comments/"]');
-          const href = link?.getAttribute("href");
-          const postId = element.getAttribute("id") || element.getAttribute("thingid");
-          if (!title || !href) return null;
-
-          const url = new URL(href, "https://www.reddit.com").toString();
-          return {
-            id: `reddit:${postId || url || index}`,
-            source: "reddit" as const,
-            author: element.getAttribute("author") || "unknown",
-            text: body ? `${title}\n${body}` : title,
-            url,
-            publishedAt: element.getAttribute("created-timestamp") || collectedAt,
-            collectedAt,
-          };
-        })
-        .filter((post): post is NonNullable<typeof post> => post !== null);
-    });
-  }
 }
 
 function formatError(error: unknown): string {
