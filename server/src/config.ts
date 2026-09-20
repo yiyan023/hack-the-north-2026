@@ -25,6 +25,18 @@ function integer(name: string, fallback: number): number {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
+const browserbaseRegions = [
+  "us-west-2",
+  "us-east-1",
+  "eu-central-1",
+  "ap-southeast-1",
+] as const;
+
+function browserbaseRegion() {
+  const requested = process.env.BROWSERBASE_REGION;
+  return browserbaseRegions.find((region) => region === requested) ?? "us-east-1";
+}
+
 export function maskSecret(value: string): string {
   if (!value) return "(empty)";
   return `set (****${value.slice(-4)}, ${value.length} chars)`;
@@ -35,6 +47,8 @@ export const config = {
   port: integer("PORT", 3000),
   browserbaseApiKey: process.env.BROWSERBASE_API_KEY ?? "",
   browserbaseContextId: process.env.BROWSERBASE_CONTEXT_ID ?? "",
+  browserbaseRegion: browserbaseRegion(),
+  browserbaseSessionTimeoutSec: integer("BROWSERBASE_SESSION_TIMEOUT_SEC", 21_600),
   syntheticFeedEnabled: process.env.ENABLE_TEST_FEED === "true",
   geminiApiKey: process.env.GEMINI_API_KEY ?? "",
   geminiModel: process.env.GEMINI_MODEL ?? "gemini-3.5-flash-lite",
@@ -42,6 +56,7 @@ export const config = {
   bufferSize: integer("BUFFER_SIZE", 100),
   postsPerBatch: integer("POSTS_PER_BATCH", 10),
   maxPostsPerGeneration: integer("MAX_POSTS_PER_GENERATION", 30),
+  geminiContextPosts: integer("GEMINI_CONTEXT_POSTS", 3),
   geminiConcurrency: integer("GEMINI_CONCURRENCY", 3),
   geminiMinIntervalMs: integer("GEMINI_MIN_INTERVAL_MS", 20_000),
   minNewPosts: integer("MIN_NEW_POSTS", 5),

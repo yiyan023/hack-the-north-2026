@@ -26,10 +26,13 @@ const mocks = vi.hoisted(() => {
     count: vi.fn().mockResolvedValue(1),
     innerText: vi.fn().mockResolvedValue("X search results"),
   }));
+  let currentUrl = "about:blank";
   const page = {
-    goto: vi.fn().mockResolvedValue(undefined),
+    goto: vi.fn().mockImplementation(async (url: string) => {
+      currentUrl = url;
+    }),
     reload: vi.fn().mockResolvedValue(undefined),
-    url: vi.fn(() => "https://x.com/search?q=Arsenal&f=live"),
+    url: vi.fn(() => currentUrl),
     title: vi.fn().mockResolvedValue("Arsenal - Search / X"),
     locator,
   };
@@ -59,6 +62,9 @@ const mocks = vi.hoisted(() => {
     primaryPost,
     tweetEvaluateAll,
     waitFor,
+    resetUrl: () => {
+      currentUrl = "about:blank";
+    },
   };
 });
 
@@ -82,6 +88,7 @@ import { BrowserbaseCollector } from "../src/collectors/browserbaseCollector.js"
 describe("BrowserbaseCollector", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.resetUrl();
     mocks.articleEvaluateAll.mockResolvedValue([mocks.primaryPost]);
     mocks.tweetEvaluateAll.mockResolvedValue([mocks.fallbackPost]);
   });
@@ -98,12 +105,15 @@ describe("BrowserbaseCollector", () => {
       sessionUrl: "https://browserbase.com/sessions/session-1",
     });
     expect(mocks.createSession).toHaveBeenCalledWith({
+      region: "us-east-1",
+      api_timeout: 21600,
       browserSettings: {
         context: { id: "context-id", persist: false },
       },
     });
     expect(initialPosts).toEqual([mocks.primaryPost]);
-    expect(mocks.page.goto).toHaveBeenCalledOnce();
+    // One navigation prewarms X; the second redirects the same tab to the game.
+    expect(mocks.page.goto).toHaveBeenCalledTimes(2);
     expect(mocks.page.reload).not.toHaveBeenCalled();
 
     const refreshedPosts = await collector.collect();
@@ -113,6 +123,9 @@ describe("BrowserbaseCollector", () => {
     // Once after start navigation and once after the scheduled reload.
     expect(mocks.waitFor).toHaveBeenCalledTimes(2);
     await collector.stop();
+    expect(mocks.browser.close).not.toHaveBeenCalled();
+    await collector.shutdown();
+    expect(mocks.browser.close).toHaveBeenCalledOnce();
   });
 
   it("keeps the existing tweet-text fallback on the optimized first collection", async () => {
@@ -125,6 +138,61 @@ describe("BrowserbaseCollector", () => {
     expect(posts).toEqual([mocks.fallbackPost]);
     expect(mocks.tweetEvaluateAll).toHaveBeenCalledOnce();
     expect(mocks.page.reload).not.toHaveBeenCalled();
+    await collector.shutdown();
+  });
+
+  it("prewarms once and reuses the same session and X tab across games", async () => {
+    const collector = new BrowserbaseCollector("api-key", "context-id");
+
+    await Promise.all([collector.prewarm(), collector.prewarm()]);
+    await collector.start("Arsenal", ["x"]);
+    await collector.collect();
     await collector.stop();
+    await collector.start("Chelsea", ["x"]);
+    await collector.collect();
+
+    expect(mocks.createSession).toHaveBeenCalledOnce();
+    expect(mocks.connectOverCDP).toHaveBeenCalledOnce();
+    expect(mocks.page.goto).toHaveBeenCalledTimes(3);
+    expect(mocks.page.reload).not.toHaveBeenCalled();
+    expect(collector.snapshot()).toMatchObject({
+      ready: true,
+      active: true,
+      sessionId: "session-1",
+    });
+
+    await collector.shutdown();
+  });
+
+  it("does not navigate again when the same game is restarted", async () => {
+    const collector = new BrowserbaseCollector("api-key", "context-id");
+
+    await collector.prewarm();
+    await collector.start("Arsenal", ["x"]);
+    await collector.collect();
+    await collector.stop();
+    await collector.start("Arsenal", ["x"]);
+    await collector.collect();
+
+    expect(mocks.createSession).toHaveBeenCalledOnce();
+    // One navigation to X home and one to the Arsenal search URL.
+    expect(mocks.page.goto).toHaveBeenCalledTimes(2);
+    expect(mocks.page.reload).not.toHaveBeenCalled();
+    await collector.shutdown();
+  });
+
+  it("can retry prewarming after session creation fails", async () => {
+    mocks.createSession.mockRejectedValueOnce(new Error("temporary outage"));
+    const collector = new BrowserbaseCollector("api-key", "context-id");
+
+    await expect(collector.prewarm()).rejects.toThrow("temporary outage");
+    await expect(collector.prewarm()).resolves.toMatchObject({
+      mode: "browserbase",
+      sessionId: "session-1",
+    });
+
+    expect(mocks.createSession).toHaveBeenCalledTimes(2);
+    expect(mocks.connectOverCDP).toHaveBeenCalledOnce();
+    await collector.shutdown();
   });
 });

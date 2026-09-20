@@ -5,7 +5,9 @@ import { SyntheticCollector } from "./collectors/syntheticCollector.js";
 import { EvidenceGenerator } from "./generators/evidenceGenerator.js";
 import { GeminiGenerator } from "./generators/geminiGenerator.js";
 import { ResilientGenerator } from "./generators/resilientGenerator.js";
+import { PendingPostQueue } from "./pendingPostQueue.js";
 import { RollingPostBuffer } from "./rollingBuffer.js";
+import { elapsedMs, logError, logInfo } from "./observability.js";
 import { SuggestionPipeline } from "./suggestionPipeline.js";
 import { pipelineLimitsForThinkingMode } from "./thinkingMode.js";
 import { aggregateSentiment, isMajorSentimentChange } from "./sentiment.js";
@@ -51,8 +53,48 @@ export class SessionService {
   private lastSentimentCheckAt = 0;
   private sentimentBaseline?: number;
   private lastError?: string;
-  private readonly buffer = new RollingPostBuffer(config.bufferSize);
+  private sessionRunId = "idle";
+  private pollSequence = 0;
+  private readonly pendingQueue = new PendingPostQueue(config.bufferSize);
+  private readonly recentContext = new RollingPostBuffer(config.bufferSize);
+  private readonly browserbaseCollector?: BrowserbaseCollector;
   private pipeline?: SuggestionPipeline;
+
+  constructor(browserbaseCollector?: BrowserbaseCollector) {
+    this.browserbaseCollector = browserbaseCollector ?? (
+      config.browserbaseApiKey
+        ? new BrowserbaseCollector(
+            config.browserbaseApiKey,
+            config.browserbaseContextId,
+          )
+        : undefined
+    );
+  }
+
+  async prewarmBrowserbase(): Promise<{
+    ready: boolean;
+    reason?: string;
+    sessionId?: string;
+    sessionUrl?: string;
+    debugUrl?: string;
+  }> {
+    if (!this.browserbaseCollector) {
+      return { ready: false, reason: "BROWSERBASE_API_KEY is not configured" };
+    }
+    try {
+      const details = await this.browserbaseCollector.prewarm();
+      return { ready: true, ...details };
+    } catch (error) {
+      this.lastError = error instanceof Error ? error.message : String(error);
+      logError("session", "browserbase.prewarm.error", error);
+      return { ready: false, reason: this.lastError };
+    }
+  }
+
+  async shutdown() {
+    await this.stop();
+    await this.browserbaseCollector?.shutdown();
+  }
 
   async start(input: {
     game: string;
@@ -61,15 +103,24 @@ export class SessionService {
     replyTo: string;
     thinkingMode: ThinkingMode;
   }) {
-    console.log(`[session] start requested game="${input.game}" sources=${input.sources.join(",")} thinking=${input.thinkingMode}`);
+    const startAt = Date.now();
     await this.stop();
+    this.sessionRunId = crypto.randomUUID().slice(0, 8);
+    this.pollSequence = 0;
+    logInfo("session", "start.begin", {
+      runId: this.sessionRunId,
+      game: input.game,
+      sources: input.sources.join(","),
+      thinkingMode: input.thinkingMode,
+    });
     this.status = "starting";
     this.game = input.game;
     this.sources = input.sources;
     this.toneExamples = input.toneExamples;
     this.replyTo = input.replyTo;
     this.thinkingMode = input.thinkingMode;
-    this.buffer.clear();
+    this.pendingQueue.clear();
+    this.recentContext.clear();
     this.details = undefined;
     this.collectors.clear();
     this.sourceStatuses = emptySourceStatuses();
@@ -101,7 +152,8 @@ export class SessionService {
       : localGenerator;
 
     this.pipeline = new SuggestionPipeline(
-      this.buffer,
+      this.pendingQueue,
+      this.recentContext,
       this.generator,
       () => ({
         game: this.game,
@@ -116,6 +168,7 @@ export class SessionService {
         concurrency: config.geminiConcurrency,
         minIntervalMs: onlySynthetic ? 0 : config.geminiMinIntervalMs,
         maxAgeMs: config.suggestionMaxAgeMs,
+        contextPosts: config.geminiContextPosts,
       },
     );
 
@@ -128,11 +181,21 @@ export class SessionService {
       this.status = "collecting";
       await this.pollOnce();
       this.timer = setInterval(() => void this.pollOnce(), config.pollIntervalMs);
+      logInfo("session", "start.end", {
+        runId: this.sessionRunId,
+        pending: this.pendingQueue.pendingSize,
+        inFlight: this.pendingQueue.inFlightSize,
+        recent: this.recentContext.size,
+        durationMs: elapsedMs(startAt),
+      });
       return this.snapshot();
     } catch (error) {
       this.status = "error";
       this.lastError = error instanceof Error ? error.message : String(error);
-      console.error(`[session] start failed: ${this.lastError}`);
+      logError("session", "start.error", error, {
+        runId: this.sessionRunId,
+        durationMs: elapsedMs(startAt),
+      });
       await Promise.allSettled([...this.collectors.values()].map((collector) => collector.stop()));
       this.collectors.clear();
       throw error;
@@ -140,6 +203,7 @@ export class SessionService {
   }
 
   async stop() {
+    this.pipeline?.stop();
     if (this.timer) clearInterval(this.timer);
     this.timer = undefined;
     this.runId += 1;
@@ -162,12 +226,12 @@ export class SessionService {
   }
 
   async refresh(): Promise<SuggestionDeck | undefined> {
-    return this.pipeline?.request(true);
+    return this.pipeline?.request(true, true);
   }
 
   async updateReplyContext(replyTo: string) {
     this.replyTo = replyTo;
-    if (this.pipeline) void this.pipeline.request(true);
+    if (this.pipeline) void this.pipeline.request(true, true);
     return { ...this.snapshot(), contextUpdated: Boolean(this.pipeline) };
   }
 
@@ -176,10 +240,12 @@ export class SessionService {
     // News ranks ahead of X in the rolling buffer, so returning a plain slice
     // can make the evidence panel look News-only. Interleave sources here so
     // the panel represents every enabled source as soon as it has results.
-    return interleaveEvidence(this.buffer.latest(50), maximum);
+    return interleaveEvidence(this.allPosts(), maximum);
   }
 
   snapshot() {
+    const allPosts = this.allPosts();
+    const warmBrowser = this.browserbaseCollector?.snapshot();
     return {
       status: this.status,
       game: this.game,
@@ -187,15 +253,20 @@ export class SessionService {
       collectorMode: this.collectors.size > 1 ? "multi-source" : this.details?.mode,
       searchMode: this.details?.searchMode,
       generatorMode: this.pipeline?.latest?.mode ?? this.generator?.mode,
-      browserbaseSessionId: this.details?.sessionId,
-      browserbaseSessionUrl: this.details?.sessionUrl,
-      browserbaseDebugUrl: this.details?.debugUrl,
-      postCount: this.buffer.size,
-      bufferVersion: this.buffer.version,
+      browserbaseReady: warmBrowser?.ready ?? false,
+      browserbaseActive: warmBrowser?.active ?? false,
+      browserbaseSessionId: this.details?.sessionId ?? warmBrowser?.sessionId,
+      browserbaseSessionUrl: this.details?.sessionUrl ?? warmBrowser?.sessionUrl,
+      browserbaseDebugUrl: this.details?.debugUrl ?? warmBrowser?.debugUrl,
+      postCount: allPosts.length,
+      bufferVersion: this.pendingQueue.version,
+      pendingPostCount: this.pendingQueue.pendingSize,
+      inFlightPostCount: this.pendingQueue.inFlightSize,
+      recentContextCount: this.recentContext.size,
       generationRunning: this.pipeline?.isRunning ?? false,
       lastPollAt: this.lastPollAt,
       lastPollAdded: this.lastPollAdded,
-      sourceCounts: this.buffer.latest(config.bufferSize).reduce(
+      sourceCounts: allPosts.reduce(
         (counts, post) => {
           counts[post.source] += 1;
           return counts;
@@ -223,15 +294,24 @@ export class SessionService {
     }
     if (this.collectors.size === 0) return;
     this.polling = true;
+    const pollId = `${this.sessionRunId}:${++this.pollSequence}`;
     const startedAt = Date.now();
-    console.log("[session] poll started");
+    logInfo("session", "poll.begin", {
+      runId: this.sessionRunId,
+      pollId,
+      pending: this.pendingQueue.pendingSize,
+      inFlight: this.pendingQueue.inFlightSize,
+      recent: this.recentContext.size,
+    });
     try {
+      const collectAt = Date.now();
       const results = await Promise.allSettled(
         [...this.collectors.entries()].map(async ([source, collector]) => ({
           source,
           posts: await collector.collect(),
         })),
       );
+      const collectorDurationMs = elapsedMs(collectAt);
       const sources = [...this.collectors.keys()];
       const posts = results.flatMap((result, index) => {
         if (result.status === "fulfilled") {
@@ -246,15 +326,33 @@ export class SessionService {
         if (source) this.sourceStatuses[source] = { ...this.sourceStatuses[source], state: "error", error: message };
         return [];
       });
-      const added = this.buffer.add(posts);
+      const queueAt = Date.now();
+      const added = this.pendingQueue.add(posts);
+      const queueDurationMs = elapsedMs(queueAt);
       this.lastPollAdded = added;
       this.lastPollAt = new Date().toISOString();
       if (posts.length > 0 || added > 0) this.lastError = undefined;
-      console.log(`[session] poll finished posts=${posts.length} added=${added} buffer=${this.buffer.size} durationMs=${Date.now() - startedAt}`);
-      this.checkSentiment(posts.length > 0);
+      logInfo("session", "poll.end", {
+        runId: this.sessionRunId,
+        pollId,
+        posts: posts.length,
+        added,
+        pending: this.pendingQueue.pendingSize,
+        inFlight: this.pendingQueue.inFlightSize,
+        recent: this.recentContext.size,
+        collectorDurationMs,
+        queueDurationMs,
+        durationMs: elapsedMs(startedAt),
+      });
+      if (added > 0) void this.pipeline?.request(false);
+      this.checkSentiment(added > 0);
     } catch (error) {
       this.lastError = error instanceof Error ? error.message : String(error);
-      console.error("Poll failed", error);
+      logError("session", "poll.error", error, {
+        runId: this.sessionRunId,
+        pollId,
+        durationMs: elapsedMs(startedAt),
+      });
     } finally {
       this.polling = false;
       if (this.pollQueued) {
@@ -268,9 +366,12 @@ export class SessionService {
     if (onlySynthetic) return [{ source: "test", collector: new SyntheticCollector() }];
     const collectors: Array<{ source: Source; collector: Collector }> = [];
     if (this.sources.includes("x")) {
+      if (!this.browserbaseCollector) {
+        throw new Error("Browserbase is not configured.");
+      }
       collectors.push({
         source: "x",
-        collector: new BrowserbaseCollector(config.browserbaseApiKey, config.browserbaseContextId),
+        collector: this.browserbaseCollector,
       });
     }
     if (this.sources.includes("news")) collectors.push({ source: "news", collector: new GoogleNewsCollector() });
@@ -303,7 +404,7 @@ export class SessionService {
     const now = Date.now();
     if (now - this.lastSentimentCheckAt < config.sentimentRefreshIntervalMs) return;
 
-    const current = aggregateSentiment(this.buffer.latest(config.bufferSize));
+    const current = aggregateSentiment(this.allPosts());
     const previous = this.sentimentBaseline;
     this.lastSentimentCheckAt = now;
     this.sentimentBaseline = current;
@@ -311,8 +412,31 @@ export class SessionService {
       previous !== undefined &&
       isMajorSentimentChange(previous, current, config.sentimentChangeThreshold)
     ) {
-      void this.pipeline.request(true);
+      void this.pipeline.request(true, true);
     }
+  }
+
+  private allPosts() {
+    const posts = [
+      ...this.pendingQueue.pendingPosts(config.bufferSize),
+      ...this.pendingQueue.inFlightPosts(),
+      ...this.recentContext.latest(config.bufferSize),
+    ];
+    const unique = new Map(posts.map((post) => [post.id, post]));
+    return [...unique.values()]
+      .sort((a, b) => {
+        if (a.rank !== undefined || b.rank !== undefined) {
+          const rankDifference =
+            (a.rank ?? Number.MAX_SAFE_INTEGER) -
+            (b.rank ?? Number.MAX_SAFE_INTEGER);
+          if (rankDifference !== 0) return rankDifference;
+        }
+        return (
+          Date.parse(b.publishedAt || b.collectedAt) -
+          Date.parse(a.publishedAt || a.collectedAt)
+        );
+      })
+      .slice(0, config.bufferSize);
   }
 }
 

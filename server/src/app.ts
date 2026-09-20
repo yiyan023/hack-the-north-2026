@@ -2,6 +2,7 @@ import cors from "cors";
 import express from "express";
 import path from "node:path";
 import { z } from "zod";
+import { elapsedMs, logInfo } from "./observability.js";
 import { SessionService } from "./sessionService.js";
 
 const startSchema = z.object({
@@ -21,6 +22,27 @@ export function createApp(session = new SessionService()) {
   const app = express();
   app.use(cors({ origin: true }));
   app.use(express.json({ limit: "100kb" }));
+  app.use((request, response, next) => {
+    const startedAt = Date.now();
+    const requestId = crypto.randomUUID().slice(0, 8);
+    response.setHeader("X-Request-Id", requestId);
+    response.once("finish", () => {
+      const durationMs = elapsedMs(startedAt);
+      if (
+        request.path.startsWith("/api/") &&
+        (request.method !== "GET" || durationMs >= 25)
+      ) {
+        logInfo("http", "request.end", {
+          requestId,
+          method: request.method,
+          path: request.path,
+          status: response.statusCode,
+          durationMs,
+        });
+      }
+    });
+    next();
+  });
   app.use(express.static(path.resolve(process.cwd(), "web")));
 
   app.get("/health", (_request, response) => {

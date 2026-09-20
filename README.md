@@ -1,13 +1,14 @@
 # iK(no)w Ball
 
-A live sports group-chat copilot. Browserbase polls X/Reddit search pages, a Node server keeps a rolling in-memory window, and Gemini creates tone-matched reactions in a Chrome side panel that can insert them into Discord. A normal web page remains available as an optional client.
+A live sports group-chat copilot. Browserbase polls X search pages, a Node server keeps an in-memory work queue plus a rolling context window, and Gemini creates tone-matched reactions in a Chrome side panel that can insert them into Discord. A normal web page remains available as an optional client.
 
 ## What is implemented
 
-- Browserbase + Playwright collector for X and Reddit search pages
+- One prewarmed Browserbase + Playwright session for authenticated X searches
 - Keyless Google News RSS collector for real public evidence
 - Configurable 10–15 second polling (12 seconds by default)
-- Deduplicated 100-post in-memory sliding window
+- Deduplicated pending queue with explicit pending, in-flight, and processed states
+- Bounded recent-context window for conversational continuity
 - Batches of 10 posts, with up to 3 Gemini calls running concurrently
 - Minimum 20 seconds between generation cycles
 - Cached three-suggestion deck for a fast side-panel UI
@@ -19,17 +20,20 @@ A live sports group-chat copilot. Browserbase polls X/Reddit search pages, a Nod
 
 ## Architecture
 
-1. Browserbase reloads narrow X and/or Reddit searches every 12 seconds.
-2. Node deduplicates results into the rolling buffer.
-3. Once at least five new posts exist, Node selects at most 30 recent posts.
-4. The posts are divided into groups of 10 and processed with bounded parallelism.
-5. Node locally selects the best safe, funny, and spicy result and caches the deck.
-6. The side panel reads the cache every three seconds.
-7. Reading Discord history updates the active reply context and refreshes suggestions.
-8. New posts update the evidence buffer without automatically triggering generation.
-9. Once per minute, the service compares aggregate sentiment with the previous check and refreshes only after a major shift.
-10. Starting a new session or explicitly refreshing also generates a new suggestion deck.
-11. Clicking a suggestion inserts it into Discord or copies it to the clipboard.
+1. Server startup creates one Browserbase session, connects Playwright, and opens X home before the user starts watching a game.
+2. Starting or switching games redirects the same X tab to the new search URL. It does not create another Browserbase session.
+3. Browserbase extracts the already-rendered first result page, then reloads the active search every 12 seconds.
+4. Node removes repeated post IDs and normalized duplicate text, then adds new evidence to the pending queue.
+5. A generation cycle claims the configured number of pending posts and marks them in flight.
+6. Gemini receives those new posts plus a small recent-context window and returns safe, funny, and spicy suggestions.
+7. Deep-mode batches may run concurrently; each post is claimed only once.
+8. Successful posts leave the queue and enter recent context. Failed posts return to pending for a later retry.
+9. Posts collected while Gemini is running remain pending and are processed automatically in a follow-up cycle.
+10. Node caches the latest suggestion deck while the side panel checks for updates every three seconds.
+11. Reading Discord history updates the active reply context and can regenerate against recent context without treating old posts as new.
+12. Clicking a suggestion inserts it into Discord or copies it to the clipboard.
+
+**Stop watching** pauses polling but deliberately keeps the prewarmed browser alive. The Browserbase session closes during graceful server shutdown or at Browserbase's six-hour maximum (`BROWSERBASE_SESSION_TIMEOUT_SEC=21600`).
 
 The click path never waits for Browserbase or Gemini.
 
@@ -39,13 +43,17 @@ The click path never waits for Browserbase or Gemini.
 2. Run `npm install`.
 3. Copy `.env.example` to `.env`.
 
-The default Public news source works without an API key and uses real Google News RSS results. Add these values to enable X/Reddit and Gemini:
+The default Public news source works without an API key and uses real Google News RSS results. Add these values to enable X and Gemini:
 
 - `BROWSERBASE_API_KEY`
+- `BROWSERBASE_CONTEXT_ID`
+- `BROWSERBASE_REGION=us-east-1` chooses the closest currently supported Browserbase region for Toronto.
+- `BROWSERBASE_SESSION_TIMEOUT_SEC=21600` uses Browserbase's six-hour maximum session lifetime.
 - `GEMINI_API_KEY`
 - `ENABLE_TEST_FEED=true` to enable the local synthetic feed for end-to-end testing.
 - `SENTIMENT_REFRESH_INTERVAL_MS=60000` controls how often aggregate sentiment is checked.
 - `SENTIMENT_CHANGE_THRESHOLD=0.35` controls how large a sentiment shift must be to refresh.
+- `GEMINI_CONTEXT_POSTS=3` controls how many successfully processed posts are included as background context.
 
 4. Run `npm run dev`.
 
@@ -86,7 +94,7 @@ displayed Browserbase session. Close the
 setup session after the context has saved the login, then run `npm run dev` and
 use the extension normally.
 
-X and Reddit change their markup regularly. The current selectors are isolated in `server/src/collectors/browserbaseCollector.ts` so they are quick to repair during the hackathon.
+X changes its markup regularly. The current selectors are isolated in `server/src/collectors/browserbaseCollector.ts` so they are quick to repair during the hackathon.
 
 ## Load the Chrome extension
 
@@ -95,7 +103,7 @@ X and Reddit change their markup regularly. The current selectors are isolated i
 3. Enable Developer mode, click Load unpacked, and select the `extension` folder.
 4. Open Discord Web and enter a channel.
 5. Click the iK(no)w Ball extension icon to open the side panel.
-6. Enter the game or sports topic manually, then choose X, Reddit, Public News, or Synthetic test feed, add optional tone examples, and click Start watching.
+6. Enter the game or sports topic manually, then choose X, Public News, or Synthetic test feed, add optional tone examples, and click Start watching.
 7. For reply context, either type a message manually or click **Read last 10 messages** while the target Discord channel is open.
 8. Review the evidence cards, then click a suggestion to insert it into Discord. The extension never sends a message automatically.
 
@@ -173,8 +181,8 @@ Leave that terminal open. Visit `http://localhost:3000/health`; it should show
    sending it; press Enter manually when ready.
 
 Fast mode still monitors X every 12 seconds so the context stays current. It
-limits each Gemini request to the latest two posts; it does not stop monitoring
-after two posts.
+claims up to two unprocessed posts for each Gemini request and includes a small
+processed context window; it does not stop monitoring after two posts.
 
 ### Recording troubleshooting
 
@@ -201,13 +209,14 @@ after two posts.
 - `GET /api/suggestions`
 - `POST /api/suggestions/refresh`
 
-Example session input contains a `game`, a `sources` array containing `x` and/or `reddit`, and an optional `toneExamples` string array.
+Example session input contains a `game`, a `sources` array containing `x`, `news`, or `test`, and an optional `toneExamples` string array.
 
 ## Development checks
 
 - `npm test`
 - `npm run typecheck`
 - `npm run build`
+- `npm run test:e2e:latency` (requires working Browserbase and Gemini credentials)
 
 ## Scope intentionally deferred
 
@@ -215,5 +224,5 @@ Example session input contains a `game`, a `sources` array containing `x` and/or
 - Native Discord or iMessage integration
 - Automatic message sending
 - Elasticsearch
-- Production-grade X/Reddit scraping guarantees
+- Production-grade X scraping guarantees
 - Chrome Web Store publishing

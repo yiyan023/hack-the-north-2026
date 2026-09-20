@@ -1,5 +1,6 @@
 import { GoogleGenAI } from "@google/genai";
 import { z } from "zod";
+import { elapsedMs, logError, logInfo } from "../observability.js";
 import type {
   BatchResult,
   SocialPost,
@@ -63,16 +64,14 @@ export class GeminiGenerator implements SuggestionGenerator {
   async generateBatch(input: {
     game: string;
     posts: SocialPost[];
+    contextPosts?: SocialPost[];
+    traceId?: string;
     toneExamples: string[];
     replyTo: string;
     avoidPhrases?: string[];
   }): Promise<BatchResult> {
-    const posts = input.posts
-      .map(
-        (post, index) =>
-          `${index + 1}. [${post.source}] ${post.author}: ${post.text}`,
-      )
-      .join("\n");
+    const posts = formatPosts(input.posts) || "(no new posts)";
+    const contextPosts = formatPosts(input.contextPosts ?? []) || "(no earlier context)";
     const tone =
       input.toneExamples.length > 0
         ? input.toneExamples.map((example) => `- ${example}`).join("\n")
@@ -94,6 +93,7 @@ export class GeminiGenerator implements SuggestionGenerator {
       sourceGuidance,
       "Translation step: read every supplied post, regardless of language, and privately translate its relevant sports facts into English before reasoning over the combined evidence. Do not omit a post because it is not English.",
       "Write the moment and every suggestion in natural English. Never output foreign-language phrases, quotes, or translations verbatim, except proper names.",
+      "Prioritize the new posts. Use the previously processed posts only as background context.",
       "Return one safe, one funny, and one spicy suggestion. Each must be at most 12 words.",
       "Write each suggestion as a natural message someone would actually send. Never prefix it with 'on' or quote the message being answered.",
       "The recent Discord history is the conversation target, not background. Make every suggestion a plausible direct next reply to the newest message; if it is a short reaction, reply to it using the immediately preceding topic. Answer, agree with a reason, disagree, or build on the point while adding a fresh evidence-grounded observation.",
@@ -108,29 +108,62 @@ export class GeminiGenerator implements SuggestionGenerator {
         : "Write a relevant standalone reaction.",
       "Tone examples:",
       tone,
-      "Recent posts:",
+      "New posts:",
       posts,
+      "Previously processed context:",
+      contextPosts,
     ].join("\n\n");
 
-    const interaction = await this.client.interactions.create({
+    const requestAt = Date.now();
+    logInfo("gemini", "request.begin", {
+      traceId: input.traceId,
       model: this.model,
-      input: prompt,
-      generation_config: {
-        // These are short, grounded chat suggestions, so minimize reasoning
-        // latency rather than spending tokens on deeper deliberation.
-        thinking_level: "minimal",
-      },
-      response_format: {
-        type: "text",
-        mime_type: "application/json",
-        schema: responseSchema,
-      },
+      newPosts: input.posts.length,
+      contextPosts: input.contextPosts?.length ?? 0,
+      promptChars: prompt.length,
+      thinkingLevel: "minimal",
+    });
+    let interaction;
+    try {
+      interaction = await this.client.interactions.create({
+        model: this.model,
+        input: prompt,
+        generation_config: {
+          // These are short, grounded chat suggestions, so minimize reasoning
+          // latency rather than spending tokens on deeper deliberation.
+          thinking_level: "minimal",
+        },
+        response_format: {
+          type: "text",
+          mime_type: "application/json",
+          schema: responseSchema,
+        },
+      });
+    } catch (error) {
+      logError("gemini", "request.error", error, {
+        traceId: input.traceId,
+        model: this.model,
+        durationMs: elapsedMs(requestAt),
+      });
+      throw error;
+    }
+    logInfo("gemini", "request.end", {
+      traceId: input.traceId,
+      model: this.model,
+      outputChars: interaction.output_text?.length ?? 0,
+      durationMs: elapsedMs(requestAt),
     });
 
     if (!interaction.output_text) {
       throw new Error("Gemini returned no text output");
     }
+    const parseAt = Date.now();
     const parsed = batchSchema.parse(JSON.parse(interaction.output_text));
+    logInfo("gemini", "response.parse.end", {
+      traceId: input.traceId,
+      suggestions: parsed.suggestions.length,
+      durationMs: elapsedMs(parseAt),
+    });
     return {
       ...parsed,
       suggestions: parsed.suggestions.map((suggestion) => ({
@@ -139,4 +172,13 @@ export class GeminiGenerator implements SuggestionGenerator {
       })),
     };
   }
+}
+
+function formatPosts(posts: SocialPost[]): string {
+  return posts
+      .map(
+        (post, index) =>
+          `${index + 1}. [${post.source}] ${post.author}: ${post.text}`,
+      )
+      .join("\n");
 }

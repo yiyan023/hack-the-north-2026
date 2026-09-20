@@ -10,6 +10,8 @@ export class EvidenceGenerator implements SuggestionGenerator {
   async generateBatch(input: {
     game: string;
     posts: SocialPost[];
+    contextPosts?: SocialPost[];
+    traceId?: string;
     toneExamples: string[];
     replyTo: string;
     avoidPhrases?: string[];
@@ -17,7 +19,7 @@ export class EvidenceGenerator implements SuggestionGenerator {
     // The offline fallback cannot translate arbitrary languages reliably. Prefer
     // English evidence and never leak a source language into its suggestions.
     // Gemini handles full translation when it is configured.
-    const headlines = input.posts
+    const headlines = [...input.posts, ...(input.contextPosts ?? [])]
       .map((post) => cleanHeadline(post.text))
       .filter(isEnglishEnough);
     const first = headlines[0] || "Fresh live updates are coming in.";
