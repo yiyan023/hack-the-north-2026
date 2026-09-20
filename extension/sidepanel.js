@@ -240,7 +240,7 @@ async function insertIntoDiscord(text) {
   try {
     const result = await sendInsertMessage(tab.id, text);
     if (!result?.ok) throw new Error(result?.error || "Insertion failed");
-    showNotice("Pasted into Discord — review it, then press Enter.");
+    showNotice("Pasted into Discord — review it, then press Enter.", "success");
   } catch (error) {
     await copyFallback(
       text,
@@ -316,8 +316,9 @@ function setStatus(text, live) {
   elements.statusDot.classList.toggle("live", live);
 }
 
-function showNotice(text) {
+function showNotice(text, tone = "") {
   elements.notice.textContent = text;
+  elements.notice.classList.toggle("success", tone === "success");
 }
 
 function thinkingModeLabel(mode) {

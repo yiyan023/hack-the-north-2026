@@ -109,6 +109,7 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
 .suggestion:hover { border-color: #b4ff39; transform: translateY(-1px); }
 .suggestion small { color: #b4ff39; display: block; margin-bottom: 4px; text-transform: uppercase; }
 .notice { color: #f3b75b; font-size: 11px; line-height: 1.4; margin: 10px 0 0; min-height: 15px; }
+.notice.success { color: #b4ff39; }
 
 .evidence { background: #14161a; border: 1px solid #25282e; border-radius: 15px; margin-top: 12px; padding: 15px; }
 .section-heading h2 { font-size: 14px; margin: 0; }
