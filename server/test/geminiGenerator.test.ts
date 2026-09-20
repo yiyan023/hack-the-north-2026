@@ -55,5 +55,9 @@ describe("GeminiGenerator", () => {
         generation_config: { thinking_level: "minimal" },
       }),
     );
+    const request = mocks.createInteraction.mock.calls[0]?.[0] as { input: string };
+    expect(request.input).toContain("regardless of language");
+    expect(request.input).toContain("every suggestion in natural English");
+    expect(request.input).toContain("Do not repeat the last message");
   });
 });

@@ -13,14 +13,17 @@ export class EvidenceGenerator implements SuggestionGenerator {
     toneExamples: string[];
     replyTo: string;
   }): Promise<BatchResult> {
-    const headlines = input.posts.map((post) => cleanHeadline(post.text));
-    const first = headlines[0] || input.game;
-    const second = headlines[1] || first;
-    const third = headlines[2] || second;
+    // The offline fallback cannot translate arbitrary languages reliably. Prefer
+    // English evidence and never leak a source language into its suggestions.
+    // Gemini handles full translation when it is configured.
+    const headlines = input.posts
+      .map((post) => cleanHeadline(post.text))
+      .filter(isEnglishEnough);
+    const first = headlines[0] || "Fresh live updates are coming in.";
     const bro = input.toneExamples.some((example) => /\bbro\b/i.test(example));
     const render = (value: string) => matchTone(limitWords(value, 12), input.toneExamples);
-    const reply = replyFragment(input.replyTo);
     const contextual = contextualSuggestions(input.replyTo, headlines, render);
+    const event = eventReaction(headlines.join(" "));
 
     return {
       moment: first.slice(0, 160),
@@ -28,23 +31,15 @@ export class EvidenceGenerator implements SuggestionGenerator {
       suggestions: contextual ?? [
         {
           style: "safe",
-          text: render(limitWords(first, 10)),
+          text: render(`that ${event} changes the whole game`),
         },
         {
           style: "funny",
-          text: render(
-            reply
-              ? `${bro ? "bro " : ""}"${reply}" aged badly: ${limitWords(second, 4)}`
-              : `${bro ? "bro " : ""}${limitWords(second, bro ? 8 : 9)} is wild`,
-          ),
+          text: render(`${bro ? "bro " : ""}the plot just found another gear`),
         },
         {
           style: "spicy",
-          text: render(
-            reply
-              ? `"${reply}" is nasty work after ${limitWords(third, 5)}`
-              : `${limitWords(third, 9)} is nasty work`,
-          ),
+          text: render(`someone check on the ${event} department`),
         },
       ],
     };
@@ -55,6 +50,26 @@ function cleanHeadline(value: string) {
   return value.replace(/\s+-\s+[^-]+$/, "").trim();
 }
 
+function isEnglishEnough(value: string) {
+  // This intentionally errs on the side of omitting a source line: final local
+  // suggestions must remain English even when a feed mixes languages/scripts.
+  if (!/[a-z]/i.test(value) || /[^\x00-\x7F]/.test(value)) return false;
+  const words = value.toLowerCase().match(/[a-z]+/g) ?? [];
+  const englishMarkers = new Set([
+    "a", "an", "and", "are", "at", "for", "from", "has", "in", "is",
+    "of", "on", "that", "the", "to", "was", "with", "will",
+  ]);
+  return words.some((word) => englishMarkers.has(word));
+}
+
+function eventReaction(evidence: string) {
+  if (/\b(?:goal|winner|equaliser|equalizer)\b/i.test(evidence)) return "goal";
+  if (/\b(?:save|keeper|goalkeeper)\b/i.test(evidence)) return "save";
+  if (/\b(?:penalty|red card|puncture|crash|injury)\b/i.test(evidence)) return "moment";
+  if (/\b(?:strategy|pit|tire|tyre)\b/i.test(evidence)) return "strategy call";
+  return "update";
+}
+
 function limitWords(value: string, maximum: number) {
   return value.trim().split(/\s+/).slice(0, maximum).join(" ");
 }
@@ -62,15 +77,6 @@ function limitWords(value: string, maximum: number) {
 function matchTone(value: string, examples: string[]) {
   const letters = examples.join(" ").replace(/[^a-z]/gi, "");
   return letters && letters === letters.toLowerCase() ? value.toLowerCase() : value;
-}
-
-function replyFragment(value: string) {
-  const latest = value
-    .split(/\n+/)
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .at(-1) || value;
-  return latest.replace(/["“”]/g, "").split(/\s+/).slice(0, 8).join(" ");
 }
 
 function contextualSuggestions(

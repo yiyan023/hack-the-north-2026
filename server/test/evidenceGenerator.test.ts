@@ -45,19 +45,28 @@ describe("EvidenceGenerator", () => {
     expect(new Set(result.suggestions.map((item) => item.text)).size).toBe(3);
   });
 
-  it("changes the copy when the message being answered changes", async () => {
-    const generator = new EvidenceGenerator();
-    const shared = {
+  it("never mirrors the final Discord message", async () => {
+    const lastMessage = "that defense is absolutely finished tonight";
+    const result = await new EvidenceGenerator().generateBatch({
       game: "Brighton vs Arsenal Premier League",
-      posts: [post("Brighton beat Arsenal 3-0", 1)],
+      posts: [post("Brighton beat Arsenal 3-0 after a late winner", 1)],
       toneExamples: ["bro is finished"],
-    };
-    const first = await generator.generateBatch({ ...shared, replyTo: "why are they losing?" });
-    const second = await generator.generateBatch({ ...shared, replyTo: "is the defense washed?" });
+      replyTo: `earlier chat\n${lastMessage}`,
+    });
 
-    expect(first.suggestions.map((item) => item.text)).not.toEqual(
-      second.suggestions.map((item) => item.text),
-    );
+    expect(result.suggestions.every((item) => !item.text.includes("defense is absolutely finished"))).toBe(true);
+  });
+
+  it("keeps local fallback output English when source posts are not English", async () => {
+    const result = await new EvidenceGenerator().generateBatch({
+      game: "test game",
+      posts: [post("El equipo gana con un gol en el ultimo minuto", 1)],
+      toneExamples: [],
+      replyTo: "",
+    });
+
+    expect(result.moment).toBe("Fresh live updates are coming in.");
+    expect(result.suggestions.every((item) => /^[\x00-\x7F]+$/.test(item.text))).toBe(true);
   });
 
   it("resolves a vague goalie reaction using a fact in the evidence", async () => {
