@@ -13,6 +13,7 @@ export class BrowserbaseCollector implements Collector {
   private readonly contextId: string;
   private browser?: Browser;
   private pages = new Map<Source, Page>();
+  private hasCollectedLoadedPages = false;
 
   constructor(apiKey: string, contextId = "") {
     this.client = new Browserbase({ apiKey });
@@ -20,6 +21,7 @@ export class BrowserbaseCollector implements Collector {
   }
 
   async start(query: string, sources: Source[]): Promise<CollectorDetails> {
+    this.hasCollectedLoadedPages = false;
     const searchMode = classifySearchMode(query);
     const browserSources = sources.filter(
       (source): source is "x" | "reddit" => source === "x" || source === "reddit",
@@ -69,6 +71,9 @@ export class BrowserbaseCollector implements Collector {
         timeout: 30_000,
       });
       console.log(`[browserbase] navigated source=${source} url=${page.url()}`);
+      if (source === "x") {
+        await this.waitForXResults(page);
+      }
       this.pages.set(source, page);
     }
 
@@ -92,14 +97,22 @@ export class BrowserbaseCollector implements Collector {
   }
 
   async collect(): Promise<SocialPost[]> {
+    // start() already navigates every page and waits for its results. Extract
+    // that rendered DOM on the first collection instead of paying for an
+    // immediate duplicate reload. Scheduled collections still reload so they
+    // receive fresh posts.
+    const shouldReload = this.hasCollectedLoadedPages;
+    this.hasCollectedLoadedPages = true;
     console.log(`[browserbase] poll started sources=${[...this.pages.keys()].join(",")}`);
     const results = await Promise.allSettled(
       [...this.pages.entries()].map(async ([source, page]) => {
-        console.log(`[browserbase] reloading source=${source} url=${page.url()}`);
-        await page.reload({ waitUntil: "domcontentloaded", timeout: 30_000 });
-        console.log(`[browserbase] loaded source=${source} url=${page.url()} title="${await page.title()}"`);
-        if (source === "x") {
-          await this.waitForXResults(page);
+        if (shouldReload) {
+          console.log(`[browserbase] reloading source=${source} url=${page.url()}`);
+          await page.reload({ waitUntil: "domcontentloaded", timeout: 30_000 });
+          console.log(`[browserbase] loaded source=${source} url=${page.url()} title="${await page.title()}"`);
+          if (source === "x") {
+            await this.waitForXResults(page);
+          }
         }
         const posts = source === "x"
           ? this.extractXPosts(page)
@@ -120,6 +133,7 @@ export class BrowserbaseCollector implements Collector {
 
   async stop(): Promise<void> {
     this.pages.clear();
+    this.hasCollectedLoadedPages = false;
     await this.browser?.close().catch(() => undefined);
     this.browser = undefined;
   }
