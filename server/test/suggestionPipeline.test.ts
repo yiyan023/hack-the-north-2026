@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { RollingPostBuffer } from "../src/rollingBuffer.js";
-import { SuggestionPipeline } from "../src/suggestionPipeline.js";
+import { SuggestionPipeline, testing } from "../src/suggestionPipeline.js";
 import type { SocialPost, SuggestionGenerator } from "../src/types.js";
 
 function posts(count: number): SocialPost[] {
@@ -16,6 +16,25 @@ function posts(count: number): SocialPost[] {
 }
 
 describe("SuggestionPipeline", () => {
+  it("removes trailing periods from final suggestions", async () => {
+    const { pickSuggestions } = testing;
+    const suggestions = pickSuggestions([{
+      moment: "test",
+      confidence: 1,
+      suggestions: [
+        { style: "safe", text: "that was wild." },
+        { style: "funny", text: "bro no way..." },
+        { style: "spicy", text: "someone check on them" },
+      ],
+    }]);
+
+    expect(suggestions.map((suggestion) => suggestion.text)).toEqual([
+      "that was wild",
+      "bro no way",
+      "someone check on them",
+    ]);
+  });
+
   it("batches ten posts and runs batches concurrently", async () => {
     const buffer = new RollingPostBuffer(100);
     buffer.add(posts(25));
