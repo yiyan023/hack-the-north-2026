@@ -45,7 +45,8 @@ describe("GeminiGenerator", () => {
         },
       ],
       toneExamples: [],
-      replyTo: "",
+      replyTo: "do you think Max can catch him?\nMcLaren looks ridiculous today",
+      avoidPhrases: ["that save was massive"],
     });
 
     expect(result.suggestions).toHaveLength(3);
@@ -58,6 +59,10 @@ describe("GeminiGenerator", () => {
     const request = mocks.createInteraction.mock.calls[0]?.[0] as { input: string };
     expect(request.input).toContain("regardless of language");
     expect(request.input).toContain("every suggestion in natural English");
-    expect(request.input).toContain("Do not repeat the last message");
+    expect(request.input).toContain("conversation target");
+    expect(request.input).toContain("plausible direct next reply");
+    expect(request.input).toContain("Max can catch him");
+    expect(request.input).toContain("Avoid-list");
+    expect(request.input).toContain("that save was massive");
   });
 });
