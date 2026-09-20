@@ -65,6 +65,7 @@ export class GeminiGenerator implements SuggestionGenerator {
     posts: SocialPost[];
     toneExamples: string[];
     replyTo: string;
+    avoidPhrases?: string[];
   }): Promise<BatchResult> {
     const posts = input.posts
       .map(
@@ -76,6 +77,10 @@ export class GeminiGenerator implements SuggestionGenerator {
       input.toneExamples.length > 0
         ? input.toneExamples.map((example) => `- ${example}`).join("\n")
         : "- casual, short, lowercase sports group-chat style";
+    const avoidList = input.avoidPhrases
+      ?.slice(-16)
+      .map((phrase) => `- ${phrase.slice(0, 180)}`)
+      .join("\n");
 
     const prompt = [
       `You are writing live group-chat reactions for ${input.game}.`,
@@ -83,12 +88,16 @@ export class GeminiGenerator implements SuggestionGenerator {
       "Translation step: read every supplied post, regardless of language, and privately translate its relevant sports facts into English before reasoning over the combined evidence. Do not omit a post because it is not English.",
       "Write the moment and every suggestion in natural English. Never output foreign-language phrases, quotes, or translations verbatim, except proper names.",
       "Return one safe, one funny, and one spicy suggestion. Each must be at most 12 words.",
-      "Write each suggestion as a natural message someone would actually send. Never prefix it with 'on', quote the message being answered, or restate/paraphrase its wording.",
-      "Discord history is context, not copy. Do not repeat the last message or its distinctive wording. Add a fresh, evidence-grounded observation instead; make all three suggestions meaningfully different.",
+      "Write each suggestion as a natural message someone would actually send. Never prefix it with 'on' or quote the message being answered.",
+      "The recent Discord history is the conversation target, not background. Read the latest 10 messages as a thread, identify the latest relevant claim, question, or disagreement, and make every suggestion a plausible direct next reply to it. Answer, agree with a reason, disagree, or build on the point while adding a fresh evidence-grounded observation.",
+      "Do not merely restate, mirror, or loosely paraphrase the latest message. Continue the conversation in a new direction that still makes sense as a reply.",
       "Use different evidence or angles across the three suggestions; do not produce synonyms of one reaction.",
       "Match the user's tone without copying an example verbatim. Avoid slurs and targeted harassment.",
+      avoidList
+        ? `Avoid-list: these are prior suggestions already shown to the user. Do not quote, repeat, or semantically paraphrase any of them. Choose a distinctly different observation or joke:\n${avoidList}`
+        : "There are no prior suggestions to avoid yet.",
       input.replyTo
-        ? `This is the recent Discord chat history. Use it only to understand the conversation's topic and tone; do not quote, mirror, or paraphrase it:\n${input.replyTo}`
+        ? `This is the recent Discord chat history, ordered oldest to newest. Reply to its active thread—especially the newest relevant message—while using the supplied posts for support:\n${input.replyTo}`
         : "Write a relevant standalone reaction.",
       "Tone examples:",
       tone,
