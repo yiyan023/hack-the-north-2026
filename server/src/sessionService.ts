@@ -131,6 +131,12 @@ export class SessionService {
     return this.pipeline?.request(true);
   }
 
+  async updateReplyContext(replyTo: string) {
+    this.replyTo = replyTo;
+    if (this.pipeline) void this.pipeline.request(true);
+    return { ...this.snapshot(), contextUpdated: Boolean(this.pipeline) };
+  }
+
   posts(limit = 12) {
     return this.buffer.latest(Math.min(Math.max(1, limit), 50));
   }

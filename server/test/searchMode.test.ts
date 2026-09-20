@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { buildSearchUrl, classifySearchMode } from "../src/searchMode.js";
+import {
+  buildSearchUrl,
+  classifySearchMode,
+  normalizeSearchQuery,
+} from "../src/searchMode.js";
 
 describe("search modes", () => {
   it("uses live feeds for an undated game", () => {
@@ -14,5 +18,14 @@ describe("search modes", () => {
     expect(buildSearchUrl("x", query)).toContain("f=top");
     expect(buildSearchUrl("reddit", query)).toContain("sort=relevance");
     expect(buildSearchUrl("reddit", query)).toContain("t=all");
+  });
+
+  it("normalizes reordered matchup wording to the same search", () => {
+    expect(normalizeSearchQuery("f1 madrid 2026 vs 2026 f1 madrid")).toBe(
+      normalizeSearchQuery("2026 f1 madrid vs f1 madrid 2026"),
+    );
+    expect(buildSearchUrl("reddit", "f1 madrid 2026 vs 2026 f1 madrid")).toBe(
+      buildSearchUrl("reddit", "2026 f1 madrid vs f1 madrid 2026"),
+    );
   });
 });

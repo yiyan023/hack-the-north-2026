@@ -84,7 +84,7 @@ export class GeminiGenerator implements SuggestionGenerator {
       "Write each suggestion as a natural message someone would actually send. Never prefix it with 'on', quote the message being answered, or restate that message.",
       "Match the user's tone without copying an example verbatim. Avoid slurs and targeted harassment.",
       input.replyTo
-        ? `Directly answer or react to this group-chat message: ${input.replyTo}`
+        ? `This is the recent Discord chat history. Treat it as primary conversational context. Respond to the latest relevant message, not just the sports evidence, and make the suggestion feel like a natural continuation of this chat:\n${input.replyTo}`
         : "Write a relevant standalone reaction.",
       "Tone examples:",
       tone,

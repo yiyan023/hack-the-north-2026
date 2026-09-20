@@ -1,5 +1,5 @@
 import { XMLParser } from "fast-xml-parser";
-import { classifySearchMode } from "../searchMode.js";
+import { classifySearchMode, normalizeSearchQuery } from "../searchMode.js";
 import type {
   Collector,
   CollectorDetails,
@@ -91,25 +91,8 @@ function textValue(value: unknown): string {
 }
 
 function buildNewsQuery(query: string, mode: "live" | "historical") {
-  const clean = query.replaceAll('"', "").trim();
-  if (mode === "historical") return `"${clean}"`;
-
-  const sides = clean.split(/\s+vs\.?\s+/i);
-  if (sides.length !== 2) return `${clean} when:30d`;
-
-  const left = sides[0]?.trim();
-  const rightAndContext = sides[1]?.trim() ?? "";
-  const contextMatch = rightAndContext.match(
-    /\b(Premier League|Champions League|Europa League|World Cup|NBA Finals?|NFL|MLB|NHL)\b/i,
-  );
-  const context = contextMatch?.[1];
-  const right = contextMatch
-    ? rightAndContext.slice(0, contextMatch.index).trim()
-    : rightAndContext;
-  return [left, right, context]
-    .filter(Boolean)
-    .map((term) => `"${term}"`)
-    .join(" ") + " when:30d";
+  const clean = normalizeSearchQuery(query);
+  return mode === "historical" ? clean : `${clean} when:30d`;
 }
 
 function relevance(title: string, query: string) {

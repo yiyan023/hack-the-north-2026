@@ -20,7 +20,11 @@
         <input id="game" placeholder="Arsenal vs. Chelsea" autocomplete="off" />
         <p class="field-hint">Include a year for a historical game.</p>
 
-        <label for="reply-to">Message to reply to <small>optional</small></label>
+        <label>Message context <small>optional</small></label>
+        <div class="reply-actions" role="group" aria-label="Message context source">
+          <button id="manual-reply" class="mode-button active" type="button">Type manually</button>
+          <button id="read-reply" class="mode-button" type="button">Read last 10 messages</button>
+        </div>
         <textarea id="reply-to" rows="2" placeholder="holy this goalie"></textarea>
 
         <fieldset>

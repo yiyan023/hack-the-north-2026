@@ -65,7 +65,12 @@ function matchTone(value: string, examples: string[]) {
 }
 
 function replyFragment(value: string) {
-  return value.trim().replace(/["“”]/g, "").split(/\s+/).slice(0, 4).join(" ");
+  const latest = value
+    .split(/\n+/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .at(-1) || value;
+  return latest.replace(/["“”]/g, "").split(/\s+/).slice(0, 8).join(" ");
 }
 
 function contextualSuggestions(

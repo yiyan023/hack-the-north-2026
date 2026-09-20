@@ -63,6 +63,10 @@ input:focus, textarea:focus, select:focus { border-color: #b4ff39; outline: none
 
 .field-hint { color: #777c84; font-size: 11px; margin: -7px 0 13px; }
 
+.reply-actions { display: grid; gap: 6px; grid-template-columns: 1fr 1.4fr; margin: 7px 0; }
+.mode-button { background: #202329; border: 1px solid #30343b; color: #aeb2b9; font-size: 11px; padding: 9px 7px; }
+.mode-button.active { border-color: #b4ff39; color: #b4ff39; }
+
 fieldset { border: 0; display: flex; gap: 14px; margin: 0 0 13px; padding: 0; }
 fieldset legend { margin-bottom: 7px; width: 100%; }
 .check { align-items: center; display: flex; gap: 6px; }

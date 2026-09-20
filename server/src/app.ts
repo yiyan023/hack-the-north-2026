@@ -12,6 +12,10 @@ const startSchema = z.object({
   thinkingMode: z.enum(["fast", "medium", "deep"]).default("medium"),
 });
 
+const contextSchema = z.object({
+  replyTo: z.string().trim().max(1_000),
+});
+
 export function createApp(session = new SessionService()) {
   const app = express();
   app.use(cors({ origin: true }));
@@ -53,6 +57,15 @@ export function createApp(session = new SessionService()) {
 
   app.post("/api/session/stop", async (_request, response) => {
     response.json(await session.stop());
+  });
+
+  app.post("/api/session/context", async (request, response) => {
+    const parsed = contextSchema.safeParse(request.body);
+    if (!parsed.success) {
+      response.status(400).json({ error: parsed.error.flatten() });
+      return;
+    }
+    response.json(await session.updateReplyContext(parsed.data.replyTo));
   });
 
   app.get("/api/suggestions", async (_request, response) => {

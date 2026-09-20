@@ -2,6 +2,8 @@ const API_BASE = "http://localhost:3000";
 const elements = {
   game: document.querySelector("#game"),
   replyTo: document.querySelector("#reply-to"),
+  manualReply: document.querySelector("#manual-reply"),
+  readReply: document.querySelector("#read-reply"),
   tone: document.querySelector("#tone"),
   thinkingMode: document.querySelector("#thinking-mode"),
   sourceX: document.querySelector("#source-x"),
@@ -39,6 +41,14 @@ chrome.storage.local.get(["game", "replyTo", "tone", "thinkingMode", "sourceX", 
 elements.thinkingMode.addEventListener("change", () => {
   chrome.storage.local.set({ thinkingMode: elements.thinkingMode.value });
 });
+elements.manualReply.addEventListener("click", () => {
+  elements.replyTo.value = "";
+  elements.replyTo.disabled = false;
+  elements.replyTo.focus();
+  elements.manualReply.classList.add("active");
+  elements.readReply.classList.remove("active");
+});
+elements.readReply.addEventListener("click", readRecentMessages);
 
 elements.start.addEventListener("click", startSession);
 elements.stop.addEventListener("click", stopSession);
@@ -240,11 +250,12 @@ async function insertIntoDiscord(text) {
 }
 
 async function sendInsertMessage(tabId, text) {
+  return sendContentMessage(tabId, { type: "INSERT_SUGGESTION", text });
+}
+
+async function sendContentMessage(tabId, message) {
   try {
-    return await chrome.tabs.sendMessage(tabId, {
-      type: "INSERT_SUGGESTION",
-      text,
-    });
+    return await chrome.tabs.sendMessage(tabId, message);
   } catch (error) {
     if (!(error instanceof Error) || !/receiving end|message port/i.test(error.message)) {
       throw error;
@@ -256,10 +267,42 @@ async function sendInsertMessage(tabId, text) {
       target: { tabId },
       files: ["content-script.js"],
     });
-    return chrome.tabs.sendMessage(tabId, {
-      type: "INSERT_SUGGESTION",
-      text,
+    return chrome.tabs.sendMessage(tabId, message);
+  }
+}
+
+async function readRecentMessages() {
+  elements.replyTo.value = "";
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (!tab?.id || !tab.url?.startsWith("https://discord.com/")) {
+    showNotice("Open a Discord channel before reading recent messages.");
+    return;
+  }
+
+  elements.readReply.disabled = true;
+  showNotice("Reading the last 10 Discord messages…");
+  try {
+    const result = await sendContentMessage(tab.id, { type: "READ_RECENT_MESSAGES" });
+    if (!result?.ok) throw new Error(result?.error || "Could not read Discord messages.");
+    if (!result.messages?.length) {
+      throw new Error("No recent chat messages were found.");
+    }
+    elements.replyTo.value = result.messages.join("\n").slice(-1_000);
+    elements.replyTo.disabled = false;
+    elements.manualReply.classList.remove("active");
+    elements.readReply.classList.add("active");
+    const contextResponse = await fetch(`${API_BASE}/api/session/context`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ replyTo: elements.replyTo.value }),
     });
+    await readJson(contextResponse);
+    void refreshSuggestions(false);
+    showNotice(`Loaded ${result.messages.length} recent messages. Refreshing suggestions…`);
+  } catch (error) {
+    showNotice(error instanceof Error ? error.message : "Could not read Discord messages.");
+  } finally {
+    elements.readReply.disabled = false;
   }
 }
 

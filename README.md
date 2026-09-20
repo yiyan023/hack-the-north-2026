@@ -25,7 +25,8 @@ A live sports group-chat copilot. Browserbase polls X/Reddit search pages, a Nod
 4. The posts are divided into groups of 10 and processed with bounded parallelism.
 5. Node locally selects the best safe, funny, and spicy result and caches the deck.
 6. The side panel reads the cache every three seconds.
-7. Clicking a suggestion inserts it into Discord or copies it to the clipboard.
+7. Reading Discord history updates the active reply context and refreshes suggestions.
+8. Clicking a suggestion inserts it into Discord or copies it to the clipboard.
 
 The click path never waits for Browserbase or Gemini.
 
@@ -58,7 +59,8 @@ X and Reddit change their markup regularly. The current selectors are isolated i
 4. Open Discord Web and enter a channel.
 5. Click the iK(no)w Ball extension icon to open the side panel.
 6. Enter the game, choose X, Reddit, or Public News, add optional tone examples, and click Start watching.
-7. Review the evidence cards, then click a suggestion to insert it into Discord. The extension never sends a message automatically.
+7. For reply context, either type a message manually or click **Read last 10 messages** while the target Discord channel is open.
+8. Review the evidence cards, then click a suggestion to insert it into Discord. The extension never sends a message automatically.
 
 The side panel includes the full setup, live status, source evidence, refresh and stop controls, and the same historical and thinking-mode behavior as the optional web client.
 
@@ -157,6 +159,7 @@ after two posts.
 - `GET /api/session/status`
 - `GET /api/posts?limit=12`
 - `POST /api/session/stop`
+- `POST /api/session/context`
 - `GET /api/suggestions`
 - `POST /api/suggestions/refresh`
 

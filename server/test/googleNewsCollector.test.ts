@@ -21,7 +21,7 @@ describe("GoogleNewsCollector", () => {
 
     expect(details).toEqual({ mode: "google-news", searchMode: "historical" });
     expect(new URL(requestedUrl).searchParams.get("q")).toBe(
-      '"Argentina vs France 2022 World Cup Final"',
+      "2022 Argentina Cup Final France World",
     );
     expect(posts[0]).toMatchObject({
       source: "news",

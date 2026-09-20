@@ -1,4 +1,14 @@
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (message?.type === "READ_RECENT_MESSAGES") {
+    const messages = readRecentMessages();
+    sendResponse(
+      messages.length
+        ? { ok: true, messages }
+        : { ok: false, error: "No recent Discord messages were found." },
+    );
+    return false;
+  }
+
   if (message?.type !== "INSERT_SUGGESTION" || typeof message.text !== "string") {
     return false;
   }
@@ -36,6 +46,19 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   sendResponse({ ok: true });
   return false;
 });
+
+function readRecentMessages() {
+  const messageElements = [...document.querySelectorAll('[id^="chat-messages-"]')];
+  return messageElements
+    .map((message) => {
+      const content = message.querySelector(
+        '[id^="message-content-"], [class*="markup"]',
+      );
+      return (content?.textContent || "").replace(/\s+/g, " ").trim();
+    })
+    .filter(Boolean)
+    .slice(-10);
+}
 
 function findChatComposer() {
   const candidates = [
