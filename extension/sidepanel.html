@@ -18,6 +18,7 @@
       <section class="setup" aria-label="Session setup">
         <label for="game">What game are you watching?</label>
         <input id="game" placeholder="Arsenal vs. Chelsea" autocomplete="off" />
+        <p class="field-hint">Include a year for a historical game.</p>
 
         <label for="reply-to">Message to reply to <small>optional</small></label>
         <textarea id="reply-to" rows="2" placeholder="holy this goalie"></textarea>
@@ -26,6 +27,7 @@
           <legend>Sources</legend>
           <label class="check"><input id="source-x" type="checkbox" checked /> X</label>
           <label class="check"><input id="source-reddit" type="checkbox" /> Reddit</label>
+          <label class="check"><input id="source-news" type="checkbox" checked /> News</label>
         </fieldset>
 
         <label for="tone">Your tone examples <small>one per line</small></label>
@@ -38,8 +40,11 @@
           <option value="deep">Deep thinking · 30 posts per reply</option>
         </select>
 
-        <button id="start" class="primary">Start watching</button>
-        <a id="debug-link" class="debug-link hidden" target="_blank" rel="noreferrer">Open Browserbase login</a>
+        <div class="actions">
+          <button id="start" class="primary" type="button">Start watching</button>
+          <button id="stop" class="secondary" type="button" disabled>Stop</button>
+        </div>
+        <a id="debug-link" class="debug-link hidden" target="_blank" rel="noreferrer">Open Browserbase session</a>
       </section>
 
       <section class="results" aria-live="polite">
@@ -47,10 +52,22 @@
           <span id="status-dot" class="dot"></span>
           <span id="status">Not started</span>
           <span id="updated"></span>
+          <button id="refresh" class="icon-button" type="button" disabled aria-label="Refresh suggestions">↻</button>
         </div>
+        <p id="session-meta" class="session-meta">Start a session to get live suggestions.</p>
         <p id="moment" class="moment">Start a session to get live suggestions.</p>
         <div id="suggestions" class="suggestions"></div>
         <p id="notice" class="notice"></p>
+      </section>
+
+      <section class="evidence" aria-labelledby="evidence-title">
+        <div class="section-heading">
+          <h2 id="evidence-title">What we actually pulled</h2>
+          <p id="evidence-meta">Source posts behind the suggestions will appear here.</p>
+        </div>
+        <div id="posts" class="post-grid" aria-live="polite">
+          <div class="empty-state">Collected posts will appear here.</div>
+        </div>
       </section>
     </main>
   </body>

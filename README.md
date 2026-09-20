@@ -1,6 +1,6 @@
 # iK(no)w Ball
 
-A live sports group-chat copilot. Browserbase polls X/Reddit search pages, a Node server keeps a rolling in-memory window, and Gemini creates tone-matched reactions that can be copied into Discord. The primary local experience is now a normal web page, with the Chrome extension retained as an optional client.
+A live sports group-chat copilot. Browserbase polls X/Reddit search pages, a Node server keeps a rolling in-memory window, and Gemini creates tone-matched reactions in a Chrome side panel that can insert them into Discord. A normal web page remains available as an optional client.
 
 ## What is implemented
 
@@ -10,10 +10,10 @@ A live sports group-chat copilot. Browserbase polls X/Reddit search pages, a Nod
 - Deduplicated 100-post in-memory sliding window
 - Batches of 10 posts, with up to 3 Gemini calls running concurrently
 - Minimum 20 seconds between generation cycles
-- Cached three-suggestion deck for a fast extension UI
-- Manifest V3 Chrome side panel
+- Cached three-suggestion deck for a fast side-panel UI
+- Manifest V3 Chrome side panel as the primary client
 - Discord Web content script with clipboard fallback
-- Browser UI at `http://localhost:3000`
+- Optional browser UI at `http://localhost:3000`
 - Historical search mode when the query includes a year
 - Source-evidence cards showing what Browserbase actually collected
 
@@ -24,8 +24,8 @@ A live sports group-chat copilot. Browserbase polls X/Reddit search pages, a Nod
 3. Once at least five new posts exist, Node selects at most 30 recent posts.
 4. The posts are divided into groups of 10 and processed with bounded parallelism.
 5. Node locally selects the best safe, funny, and spicy result and caches the deck.
-6. The web UI reads the cache every three seconds.
-7. Clicking Copy puts a suggestion on the clipboard for Discord.
+6. The side panel reads the cache every three seconds.
+7. Clicking a suggestion inserts it into Discord or copies it to the clipboard.
 
 The click path never waits for Browserbase or Gemini.
 
@@ -50,28 +50,21 @@ When a real Browserbase session starts, the API and extension return an `Open Br
 
 X and Reddit change their markup regularly. The current selectors are isolated in `server/src/collectors/browserbaseCollector.ts` so they are quick to repair during the hackathon.
 
-## Open the local web UI
+## Load the Chrome extension
 
-1. Start the server with `npm run dev`.
-2. Open `http://localhost:3000`.
-3. Enter a current game or include a year for a historical game.
-4. Select Public news for the keyless real-data path, or X/Reddit with Browserbase configured, and click Start watching.
-5. Review the source-evidence cards, then copy one of the three suggestions.
-
-The web UI requires no browser extension or administrator privileges.
-
-## Optional: load the Chrome extension
-
-1. Start the Node server on port 3000.
+1. Start the Node server on port 3000 with `npm run dev`.
 2. Open `chrome://extensions` in Chrome.
-3. Enable Developer mode.
-4. Click Load unpacked.
-5. Select the `extension` folder in this repository.
-6. Open Discord Web and enter a channel.
-7. Click the extension icon to open its side panel.
-8. Enter the game, optional tone examples, and click Start watching.
+3. Enable Developer mode, click Load unpacked, and select the `extension` folder.
+4. Open Discord Web and enter a channel.
+5. Click the iK(no)w Ball extension icon to open the side panel.
+6. Enter the game, choose X, Reddit, or Public News, add optional tone examples, and click Start watching.
+7. Review the evidence cards, then click a suggestion to insert it into Discord. The extension never sends a message automatically.
 
-The extension fills the Discord composer but never sends a message automatically.
+The side panel includes the full setup, live status, source evidence, refresh and stop controls, and the same historical and thinking-mode behavior as the optional web client.
+
+## Optional: open the local web UI
+
+Open `http://localhost:3000` after starting the server. It uses the same API and remains useful for debugging the source collector without loading the extension.
 
 ## Run the recording demo on another laptop
 

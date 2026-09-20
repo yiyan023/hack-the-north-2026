@@ -6,35 +6,50 @@ const elements = {
   thinkingMode: document.querySelector("#thinking-mode"),
   sourceX: document.querySelector("#source-x"),
   sourceReddit: document.querySelector("#source-reddit"),
+  sourceNews: document.querySelector("#source-news"),
   start: document.querySelector("#start"),
+  stop: document.querySelector("#stop"),
+  refresh: document.querySelector("#refresh"),
   status: document.querySelector("#status"),
   statusDot: document.querySelector("#status-dot"),
   updated: document.querySelector("#updated"),
+  sessionMeta: document.querySelector("#session-meta"),
   moment: document.querySelector("#moment"),
   suggestions: document.querySelector("#suggestions"),
+  posts: document.querySelector("#posts"),
+  evidenceMeta: document.querySelector("#evidence-meta"),
   notice: document.querySelector("#notice"),
   debugLink: document.querySelector("#debug-link"),
 };
 
 let generatedAt;
 let thinkingMode;
+let pollTimer;
 
-chrome.storage.local.get(["game", "replyTo", "tone", "thinkingMode"], (saved) => {
+chrome.storage.local.get(["game", "replyTo", "tone", "thinkingMode", "sourceX", "sourceReddit", "sourceNews"], (saved) => {
   if (saved.game) elements.game.value = saved.game;
   if (saved.replyTo) elements.replyTo.value = saved.replyTo;
   if (saved.tone) elements.tone.value = saved.tone;
   if (saved.thinkingMode) elements.thinkingMode.value = saved.thinkingMode;
+  if (typeof saved.sourceX === "boolean") elements.sourceX.checked = saved.sourceX;
+  if (typeof saved.sourceReddit === "boolean") elements.sourceReddit.checked = saved.sourceReddit;
+  if (typeof saved.sourceNews === "boolean") elements.sourceNews.checked = saved.sourceNews;
 });
 
 elements.thinkingMode.addEventListener("change", () => {
   chrome.storage.local.set({ thinkingMode: elements.thinkingMode.value });
 });
 
-elements.start.addEventListener("click", async () => {
+elements.start.addEventListener("click", startSession);
+elements.stop.addEventListener("click", stopSession);
+elements.refresh.addEventListener("click", () => refreshSuggestions(true));
+
+async function startSession() {
   const game = elements.game.value.trim();
   const sources = [
     elements.sourceX.checked ? "x" : null,
     elements.sourceReddit.checked ? "reddit" : null,
+    elements.sourceNews.checked ? "news" : null,
   ].filter(Boolean);
 
   if (!game || sources.length === 0) {
@@ -44,52 +59,68 @@ elements.start.addEventListener("click", async () => {
 
   elements.start.disabled = true;
   showNotice("");
-  setStatus("Starting…", false);
+  setStatus("Starting source collector…", false);
+  elements.suggestions.replaceChildren(empty("Collecting evidence and preparing suggestions…"));
+  elements.posts.replaceChildren(empty("Waiting for the first real-data pull…"));
 
   try {
     const toneExamples = elements.tone.value
       .split("\n")
       .map((line) => line.trim())
       .filter(Boolean);
-    const thinkingMode = elements.thinkingMode.value;
+    const selectedThinkingMode = elements.thinkingMode.value;
     const replyTo = elements.replyTo.value.trim();
     const response = await fetch(`${API_BASE}/api/session/start`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ game, sources, toneExamples, replyTo, thinkingMode }),
+      body: JSON.stringify({ game, sources, toneExamples, replyTo, thinkingMode: selectedThinkingMode }),
     });
-    const payload = await response.json();
-    if (!response.ok) throw new Error(payload.error || "Could not start session");
+    const payload = await readJson(response);
 
     chrome.storage.local.set({
       game,
       replyTo,
       tone: elements.tone.value,
-      thinkingMode,
+      thinkingMode: selectedThinkingMode,
+      sourceX: elements.sourceX.checked,
+      sourceReddit: elements.sourceReddit.checked,
+      sourceNews: elements.sourceNews.checked,
     });
-    setStatus(payload.collectorMode === "demo" ? "Demo is live" : "Watching live", true);
-    if (payload.browserbaseDebugUrl) {
-      elements.debugLink.href = payload.browserbaseDebugUrl;
-      elements.debugLink.classList.remove("hidden");
-    }
-    await refreshSuggestions();
+    elements.stop.disabled = false;
+    elements.refresh.disabled = false;
+    setStatus(payload.collectorMode === "google-news" ? "Public news is polling" : "Browserbase is polling", true);
+    renderSessionMeta(payload);
+    configureDebugLink(payload.browserbaseDebugUrl);
+    await Promise.all([refreshSuggestions(false), refreshEvidence(), refreshStatus()]);
+    startPolling();
   } catch (error) {
     setStatus("Connection failed", false);
+    elements.sessionMeta.textContent = "Real providers only · session not started";
     showNotice(error instanceof Error ? error.message : String(error));
   } finally {
     elements.start.disabled = false;
   }
-});
+}
 
-async function refreshSuggestions() {
+async function stopSession() {
+  clearInterval(pollTimer);
+  pollTimer = undefined;
+  await fetch(`${API_BASE}/api/session/stop`, { method: "POST" });
+  elements.stop.disabled = true;
+  elements.refresh.disabled = true;
+  setStatus("Stopped", false);
+  showNotice("");
+}
+
+async function refreshSuggestions(force = false) {
   try {
-    const response = await fetch(`${API_BASE}/api/suggestions`);
-    const payload = await response.json();
-    if (!response.ok && response.status !== 202) {
-      throw new Error(payload.error || "Could not load suggestions");
-    }
+    const response = await fetch(
+      `${API_BASE}${force ? "/api/suggestions/refresh" : "/api/suggestions"}`,
+      force ? { method: "POST" } : undefined,
+    );
+    const payload = await readJson(response);
     if (payload.status !== "ready") {
-      elements.moment.textContent = "Gathering enough conversation…";
+      elements.moment.textContent = "Gathering enough relevant conversation…";
       return;
     }
 
@@ -99,10 +130,36 @@ async function refreshSuggestions() {
     elements.suggestions.replaceChildren(
       ...payload.suggestions.map(suggestionButton),
     );
-    setStatus(payload.mode === "demo" ? "Demo is live" : "Watching live", true);
+    setStatus(payload.mode === "local" ? "Using local evidence" : "Gemini is live", true);
     updateAge();
+  } catch (error) {
+    showNotice(error instanceof Error ? error.message : "Could not load suggestions");
+  }
+}
+
+async function refreshStatus() {
+  try {
+    const payload = await readJson(await fetch(`${API_BASE}/api/session/status`));
+    renderSessionMeta(payload);
+    if (payload.providerWarning) showNotice(payload.providerWarning);
+    else if (payload.lastError) showNotice(payload.lastError);
   } catch {
     setStatus("Server offline", false);
+  }
+}
+
+async function refreshEvidence() {
+  try {
+    const payload = await readJson(await fetch(`${API_BASE}/api/posts?limit=12`));
+    const posts = payload.posts ?? [];
+    elements.evidenceMeta.textContent = posts.length
+      ? `${posts.length} recent posts shown. These are the inputs behind the suggestions.`
+      : "No matching posts yet. Try both teams plus the competition name.";
+    elements.posts.replaceChildren(
+      ...(posts.length ? posts.map(postCard) : [empty("No posts collected yet.")]),
+    );
+  } catch {
+    elements.posts.replaceChildren(empty("Could not load source evidence."));
   }
 }
 
@@ -118,6 +175,50 @@ function suggestionButton(suggestion) {
   return button;
 }
 
+function postCard(post) {
+  const card = document.createElement("article");
+  card.className = "post";
+  const header = document.createElement("div");
+  header.className = "post-header";
+  const source = document.createElement("span");
+  source.className = "source";
+  source.textContent = post.source;
+  const author = document.createElement("span");
+  author.textContent = post.author || "unknown";
+  const text = document.createElement("p");
+  text.textContent = post.text;
+  const link = document.createElement("a");
+  link.href = post.url;
+  link.target = "_blank";
+  link.rel = "noreferrer";
+  link.textContent = "Open source ↗";
+  header.append(source, author);
+  card.append(header, text, link);
+  return card;
+}
+
+function empty(message) {
+  const element = document.createElement("div");
+  element.className = "empty-state";
+  element.textContent = message;
+  return element;
+}
+
+function renderSessionMeta(payload) {
+  const counts = payload.sourceCounts ?? { x: 0, reddit: 0, news: 0 };
+  const mode = payload.searchMode === "historical" ? "Historical relevance" : "Live / recent";
+  elements.sessionMeta.textContent = `${mode} · ${payload.postCount ?? 0} posts · X ${counts.x} · Reddit ${counts.reddit} · News ${counts.news} · ${payload.collectorMode ?? "collector"} + ${payload.generatorMode ?? "generator"}`;
+}
+
+function configureDebugLink(url) {
+  if (!url) {
+    elements.debugLink.classList.add("hidden");
+    return;
+  }
+  elements.debugLink.href = url;
+  elements.debugLink.classList.remove("hidden");
+}
+
 async function insertIntoDiscord(text) {
   showNotice("");
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -127,10 +228,7 @@ async function insertIntoDiscord(text) {
   }
 
   try {
-    const result = await chrome.tabs.sendMessage(tab.id, {
-      type: "INSERT_SUGGESTION",
-      text,
-    });
+    const result = await sendInsertMessage(tab.id, text);
     if (!result?.ok) throw new Error(result?.error || "Insertion failed");
     showNotice("Pasted into Discord — review it, then press Enter.");
   } catch (error) {
@@ -138,6 +236,30 @@ async function insertIntoDiscord(text) {
       text,
       `${error instanceof Error ? error.message : "Insertion failed"} Copied instead.`,
     );
+  }
+}
+
+async function sendInsertMessage(tabId, text) {
+  try {
+    return await chrome.tabs.sendMessage(tabId, {
+      type: "INSERT_SUGGESTION",
+      text,
+    });
+  } catch (error) {
+    if (!(error instanceof Error) || !/receiving end|message port/i.test(error.message)) {
+      throw error;
+    }
+    if (!chrome.scripting?.executeScript) {
+      throw new Error("Reload iK(no)w Ball in chrome://extensions, then reload Discord.");
+    }
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      files: ["content-script.js"],
+    });
+    return chrome.tabs.sendMessage(tabId, {
+      type: "INSERT_SUGGESTION",
+      text,
+    });
   }
 }
 
@@ -171,5 +293,23 @@ function updateAge() {
     : `Updated ${seconds}s ago`;
 }
 
-setInterval(refreshSuggestions, 3_000);
+startPolling();
 setInterval(updateAge, 1_000);
+
+function startPolling() {
+  if (pollTimer) return;
+  pollTimer = setInterval(() => {
+    void refreshSuggestions();
+    void refreshStatus();
+    void refreshEvidence();
+  }, 3_000);
+}
+
+async function readJson(response) {
+  const payload = await response.json();
+  if (!response.ok && response.status !== 202) {
+    const error = payload.error;
+    throw new Error(typeof error === "string" ? error : error?.formErrors?.[0] || Object.values(error?.fieldErrors ?? {}).flat()[0] || "Request failed");
+  }
+  return payload;
+}

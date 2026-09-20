@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "description": "Live sports group-chat suggestions powered by current fan reactions.",
   "minimum_chrome_version": "114",
-  "permissions": ["activeTab", "tabs", "sidePanel", "storage", "clipboardWrite"],
+  "permissions": ["activeTab", "tabs", "scripting", "sidePanel", "storage", "clipboardWrite"],
   "host_permissions": ["http://localhost:3000/*", "https://discord.com/*"],
   "background": {
     "service_worker": "service-worker.js"
