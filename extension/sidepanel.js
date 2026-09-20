@@ -163,7 +163,7 @@ async function refreshEvidence() {
     const payload = await readJson(await fetch(`${API_BASE}/api/posts?limit=12`));
     const posts = payload.posts ?? [];
     elements.evidenceMeta.textContent = posts.length
-      ? `${posts.length} recent posts shown. These are the inputs behind the suggestions.`
+      ? `${posts.length} collected posts shown, mixed across available sources.`
       : "No matching posts yet. Try both teams plus the competition name.";
     elements.posts.replaceChildren(
       ...(posts.length ? posts.map(postCard) : [empty("No posts collected yet.")]),
@@ -192,7 +192,7 @@ function postCard(post) {
   header.className = "post-header";
   const source = document.createElement("span");
   source.className = "source";
-  source.textContent = post.source;
+  source.textContent = ({ x: "X (Twitter)", news: "Google News", test: "Test feed" })[post.source] ?? post.source;
   const author = document.createElement("span");
   author.textContent = post.author || "unknown";
   const text = document.createElement("p");

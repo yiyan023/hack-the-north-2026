@@ -199,7 +199,7 @@ export class SuggestionPipeline {
       const strongest = [...results].sort((a, b) => b.confidence - a.confidence)[0];
       if (!strongest || suggestions.length !== 3) {
         this.generationError =
-          "Suggestions overlapped recent chat or prior suggestions; waiting for fresher evidence.";
+          "Suggestions overlapped prior wording; waiting for fresher evidence.";
         this.queue.retry(posts);
         return this.deck;
       }
@@ -299,7 +299,10 @@ async function mapWithConcurrency<T, R>(
   return results;
 }
 
-function pickSuggestions(results: BatchResult[], avoidPhrases: string[] = []) {
+function pickSuggestions(
+  results: BatchResult[],
+  avoidPhrases: string[] = [],
+) {
   const styles: SuggestionStyle[] = ["safe", "funny", "spicy"];
   return styles.flatMap((style) => {
     const candidate = results
@@ -354,7 +357,10 @@ function meaningfulWords(text: string) {
 }
 
 function wordPhrases(words: string[]) {
-  return words.slice(0, -2).map((_, index) => words.slice(index, index + 3).join(" "));
+  return Array.from(
+    { length: Math.max(0, words.length - 2) },
+    (_, index) => words.slice(index, index + 3).join(" "),
+  );
 }
 
 function withoutTrailingPeriod(text: string) {

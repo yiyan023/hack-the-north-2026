@@ -80,19 +80,26 @@ export class GeminiGenerator implements SuggestionGenerator {
       ?.slice(-16)
       .map((phrase) => `- ${phrase.slice(0, 180)}`)
       .join("\n");
+    const hasNews = input.posts.some((post) => post.source === "news");
+    const hasX = input.posts.some((post) => post.source === "x");
+    const sourceGuidance = hasNews && !hasX
+      ? "Only Google News is available. Treat its headlines strictly as private factual background, not as wording or a writing style. Keep the same conversational, tone-matched Discord experience you would provide with X available."
+      : "Use every available source as private factual background. X reactions can inform the fan angle, but neither X nor News wording should be copied into the reply.";
 
     const prompt = [
       `You are writing live group-chat reactions for ${input.game}.`,
       "Use only claims supported by the supplied posts. Do not invent scores, injuries, or events.",
+      "Source posts are evidence, never reply text. Compose a novel Discord-native continuation from the chat thread and the user's tone; do not copy source phrasing, headline structure, or a source's voice. Rewrite source-derived ideas in your own words.",
+      sourceGuidance,
       "Translation step: read every supplied post, regardless of language, and privately translate its relevant sports facts into English before reasoning over the combined evidence. Do not omit a post because it is not English.",
       "Write the moment and every suggestion in natural English. Never output foreign-language phrases, quotes, or translations verbatim, except proper names.",
       "Prioritize the new posts. Use the previously processed posts only as background context.",
       "Return one safe, one funny, and one spicy suggestion. Each must be at most 12 words.",
       "Write each suggestion as a natural message someone would actually send. Never prefix it with 'on' or quote the message being answered.",
-      "The recent Discord history is the conversation target, not background. Read the latest 10 messages as a thread, identify the latest relevant claim, question, or disagreement, and make every suggestion a plausible direct next reply to it. Answer, agree with a reason, disagree, or build on the point while adding a fresh evidence-grounded observation.",
+      "The recent Discord history is the conversation target, not background. Make every suggestion a plausible direct next reply to the newest message; if it is a short reaction, reply to it using the immediately preceding topic. Answer, agree with a reason, disagree, or build on the point while adding a fresh evidence-grounded observation.",
       "Do not merely restate, mirror, or loosely paraphrase the latest message. Continue the conversation in a new direction that still makes sense as a reply.",
       "Use different evidence or angles across the three suggestions; do not produce synonyms of one reaction.",
-      "Match the user's tone without copying an example verbatim. Avoid slurs and targeted harassment.",
+      "Match both the user's tone examples and the group chat's current vibe—its energy, informality, humor, and level of excitement—without copying any message or example verbatim. Avoid slurs and targeted harassment.",
       avoidList
         ? `Avoid-list: these are prior suggestions already shown to the user. Do not quote, repeat, or semantically paraphrase any of them. Choose a distinctly different observation or joke:\n${avoidList}`
         : "There are no prior suggestions to avoid yet.",

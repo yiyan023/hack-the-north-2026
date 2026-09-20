@@ -14,6 +14,7 @@ import { aggregateSentiment, isMajorSentimentChange } from "./sentiment.js";
 import type {
   Collector,
   CollectorDetails,
+  SocialPost,
   Source,
   SuggestionDeck,
   SuggestionGenerator,
@@ -235,7 +236,11 @@ export class SessionService {
   }
 
   posts(limit = 12) {
-    return this.allPosts().slice(0, Math.min(Math.max(1, limit), 50));
+    const maximum = Math.min(Math.max(1, limit), 50);
+    // News ranks ahead of X in the rolling buffer, so returning a plain slice
+    // can make the evidence panel look News-only. Interleave sources here so
+    // the panel represents every enabled source as soon as it has results.
+    return interleaveEvidence(this.allPosts(), maximum);
   }
 
   snapshot() {
@@ -433,4 +438,24 @@ export class SessionService {
       })
       .slice(0, config.bufferSize);
   }
+}
+
+function interleaveEvidence(posts: SocialPost[], maximum: number) {
+  const queues = new Map<Source, SocialPost[]>();
+  for (const source of ["x", "news", "test"] as const) queues.set(source, []);
+  for (const post of posts) queues.get(post.source)?.push(post);
+
+  const mixed: SocialPost[] = [];
+  while (mixed.length < maximum) {
+    let added = false;
+    for (const source of ["x", "news", "test"] as const) {
+      const post = queues.get(source)?.shift();
+      if (!post) continue;
+      mixed.push(post);
+      added = true;
+      if (mixed.length === maximum) break;
+    }
+    if (!added) break;
+  }
+  return mixed;
 }
