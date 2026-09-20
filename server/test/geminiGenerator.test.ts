@@ -36,7 +36,7 @@ describe("GeminiGenerator", () => {
       posts: [
         {
           id: "x:1",
-          source: "x",
+          source: "news",
           author: "viewer",
           text: "Huge save from the goalkeeper",
           url: "https://x.com/viewer/status/1",
@@ -64,5 +64,11 @@ describe("GeminiGenerator", () => {
     expect(request.input).toContain("Max can catch him");
     expect(request.input).toContain("Avoid-list");
     expect(request.input).toContain("that save was massive");
+    expect(request.input).toContain("Source posts are evidence, never reply text");
+    expect(request.input).toContain("Rewrite source-derived ideas in your own words");
+    expect(request.input).toContain("direct next reply to the newest message");
+    expect(request.input).toContain("group chat's current vibe");
+    expect(request.input).toContain("Only Google News is available");
+    expect(request.input).toContain("same conversational, tone-matched Discord experience");
   });
 });
