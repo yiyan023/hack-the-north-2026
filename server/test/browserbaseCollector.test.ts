@@ -5,7 +5,7 @@ const mocks = vi.hoisted(() => {
     id: "x:https://x.com/test/status/1",
     source: "x",
     author: "Test User",
-    text: "A loaded post",
+    text: "An Arsenal loaded post",
     url: "https://x.com/test/status/1",
     publishedAt: "2026-09-19T00:00:00.000Z",
     collectedAt: "2026-09-19T00:00:01.000Z",
@@ -13,7 +13,7 @@ const mocks = vi.hoisted(() => {
   const fallbackPost = {
     ...primaryPost,
     id: "x:https://x.com/test/status/2",
-    text: "A fallback-selector post",
+    text: "An Arsenal fallback-selector post",
     url: "https://x.com/test/status/2",
   };
   const waitFor = vi.fn().mockResolvedValue(undefined);
@@ -83,7 +83,10 @@ vi.mock("playwright-core", () => ({
   },
 }));
 
-import { BrowserbaseCollector } from "../src/collectors/browserbaseCollector.js";
+import {
+  BrowserbaseCollector,
+  testing,
+} from "../src/collectors/browserbaseCollector.js";
 
 describe("BrowserbaseCollector", () => {
   beforeEach(() => {
@@ -194,5 +197,32 @@ describe("BrowserbaseCollector", () => {
     expect(mocks.createSession).toHaveBeenCalledTimes(2);
     expect(mocks.connectOverCDP).toHaveBeenCalledOnce();
     await collector.shutdown();
+  });
+
+  it("rejects obvious wrong-year X posts while allowing current posts without a year", () => {
+    expect(
+      testing.matchesLiveQuery(
+        "Tai Tzu-ying at the 2020 badminton championships",
+        "2026 badminton championships",
+      ),
+    ).toBe(false);
+    expect(
+      testing.matchesLiveQuery(
+        "The badminton final is getting tense",
+        "2026 badminton championships",
+      ),
+    ).toBe(true);
+    expect(
+      testing.matchesLiveQuery(
+        "Kazakhstan chess championship results",
+        "2026 badminton championships",
+      ),
+    ).toBe(false);
+    expect(
+      testing.matchesLiveQuery(
+        "Badminton Asia Championships injury update",
+        "Badminton BWF 2026 World Championships",
+      ),
+    ).toBe(false);
   });
 });

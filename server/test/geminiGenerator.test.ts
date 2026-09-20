@@ -70,5 +70,8 @@ describe("GeminiGenerator", () => {
     expect(request.input).toContain("group chat's current vibe");
     expect(request.input).toContain("Only Google News is available");
     expect(request.input).toContain("same conversational, tone-matched Discord experience");
+    expect(request.input).toContain("hard scope");
+    expect(request.input).toContain("Never substitute a famous past player");
+    expect(request.input).toContain("[published 2026-09-20T00:00:00.000Z]");
   });
 });

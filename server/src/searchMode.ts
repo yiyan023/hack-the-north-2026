@@ -7,7 +7,16 @@ const HISTORICAL_HINT_PATTERN = /\b(?:historical|classic|throwback|replay)\b/i;
 const QUERY_CONNECTORS = new Set(["vs", "versus"]);
 
 export function classifySearchMode(query: string): SearchMode {
-  return YEAR_PATTERN.test(query) || HISTORICAL_HINT_PATTERN.test(query)
+  return classifySearchModeAtYear(query, new Date().getUTCFullYear());
+}
+
+export function classifySearchModeAtYear(
+  query: string,
+  currentYear: number,
+): SearchMode {
+  const years = query.match(new RegExp(YEAR_PATTERN.source, "g")) ?? [];
+  const referencesPastYear = years.some((year) => Number(year) < currentYear);
+  return referencesPastYear || HISTORICAL_HINT_PATTERN.test(query)
     ? "historical"
     : "live";
 }
@@ -20,12 +29,33 @@ export function buildSearchUrl(
   const searchQuery = normalizeSearchQuery(query);
   if (source === "x") {
     const params = new URLSearchParams({ q: searchQuery, src: "typed_query" });
-    if (mode === "historical") params.set("f", "top");
+    params.set("f", mode === "historical" ? "top" : "live");
     return `https://x.com/search?${params.toString()}`;
   }
 
   // Reddit support disabled.
   throw new Error("Reddit support is disabled.");
+}
+
+export function buildSearchQuery(query: string): string {
+  const clean = query
+    .replaceAll('"', "")
+    .replace(/\bvs\.?\b|\bversus\b/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  const patterns = [
+    /\bworld\s+cup(?:\s+finals?)?\b/i,
+    /\bchampions\s+league\b/i,
+    /\b(?:nba|wnba|nfl|nhl|mlb)\s+finals?\b/i,
+    /\b[\p{L}'-]+\s+(?:championships?|tournament|masters|open)\b/iu,
+  ];
+  const phrase = patterns
+    .map((pattern) => clean.match(pattern)?.[0])
+    .find(Boolean);
+  if (!phrase) return normalizeSearchQuery(clean);
+
+  const remainder = normalizeSearchQuery(clean.replace(phrase, " "));
+  return [remainder, `"${phrase}"`].filter(Boolean).join(" ");
 }
 
 export function normalizeSearchQuery(query: string): string {

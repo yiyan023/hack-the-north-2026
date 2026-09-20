@@ -1,5 +1,5 @@
 import { XMLParser } from "fast-xml-parser";
-import { classifySearchMode, normalizeSearchQuery } from "../searchMode.js";
+import { buildSearchQuery, classifySearchMode } from "../searchMode.js";
 import type {
   Collector,
   CollectorDetails,
@@ -48,9 +48,16 @@ export class GoogleNewsCollector implements Collector {
     const items = rawItems ? (Array.isArray(rawItems) ? rawItems : [rawItems]) : [];
     const collectedAt = new Date().toISOString();
 
-    const minimumRelevance = Math.min(2, queryTokens(this.query).length);
+    const minimumRelevance = relevanceThreshold(this.query);
     const orderedItems = [...items]
-      .filter((item) => relevance(textValue(item.title), this.query) >= minimumRelevance)
+      .filter((item) => {
+        const title = textValue(item.title);
+        return (
+          relevance(title, this.query) >= minimumRelevance &&
+          matchesRequestedYears(title, this.query) &&
+          (this.searchMode === "historical" || isRecent(item.pubDate, collectedAt))
+        );
+      })
       .sort((left, right) => {
         const qualityDifference = quality(textValue(right.title), this.query) - quality(textValue(left.title), this.query);
         if (qualityDifference !== 0) return qualityDifference;
@@ -91,7 +98,7 @@ function textValue(value: unknown): string {
 }
 
 function buildNewsQuery(query: string, mode: "live" | "historical") {
-  const clean = normalizeSearchQuery(query);
+  const clean = buildSearchQuery(query);
   return mode === "historical" ? clean : `${clean} when:30d`;
 }
 
@@ -105,6 +112,7 @@ function relevance(title: string, query: string) {
 
 function tokenMatches(title: string, token: string) {
   if (title.includes(token)) return true;
+  if (token.endsWith("s") && title.includes(token.slice(0, -1))) return true;
   const aliases: Record<string, string[]> = {
     cavaliers: ["cavs", "cleveland"],
     warriors: ["golden state"],
@@ -127,5 +135,43 @@ function quality(title: string, query: string) {
   const promotional = /\b(?:how to watch|live stream|tv channel|broadcast|odds|regarder|prediction)\b/i.test(title)
     ? 4
     : 0;
-  return relevance(title, query) * 10 + useful - promotional;
+  return relevance(title, query) * 10 + orderedPhraseBonus(title, query) + useful - promotional;
 }
+
+function relevanceThreshold(query: string) {
+  const tokens = queryTokens(query);
+  if (tokens.length <= 2) return tokens.length;
+  return Math.ceil(tokens.length * 0.7);
+}
+
+function matchesRequestedYears(title: string, query: string) {
+  const requestedYears = query.match(/\b(?:19|20)\d{2}\b/g) ?? [];
+  return requestedYears.every((year) => title.includes(year));
+}
+
+function isRecent(pubDate: string | undefined, collectedAt: string) {
+  if (!pubDate) return true;
+  const publishedAt = Date.parse(pubDate);
+  if (!Number.isFinite(publishedAt)) return true;
+  return Date.parse(collectedAt) - publishedAt <= 45 * 24 * 60 * 60 * 1_000;
+}
+
+function orderedPhraseBonus(title: string, query: string) {
+  const titleWords = title.toLowerCase().replace(/[^a-z0-9]+/g, " ");
+  const phrases = queryTokens(query)
+    .filter((token) => !/^\d{4}$/.test(token))
+    .slice(0, 5)
+    .flatMap((token, index, tokens) => {
+      const next = tokens[index + 1];
+      return next ? [`${token} ${next}`] : [];
+    });
+  return phrases.some((phrase) => titleWords.includes(phrase)) ? 8 : 0;
+}
+
+export const testing = {
+  buildNewsQuery,
+  isRecent,
+  matchesRequestedYears,
+  relevance,
+  relevanceThreshold,
+};

@@ -21,12 +21,36 @@ describe("GoogleNewsCollector", () => {
 
     expect(details).toEqual({ mode: "google-news", searchMode: "historical" });
     expect(new URL(requestedUrl).searchParams.get("q")).toBe(
-      "2022 Argentina Cup Final France World",
+      '2022 Argentina France "World Cup Final"',
     );
     expect(posts[0]).toMatchObject({
       source: "news",
       author: "Test News",
       text: "2022 World Cup Final Argentina vs France recap",
     });
+  });
+
+  it("keeps a current-year query live and rejects old-year or wrong-sport headlines", async () => {
+    const currentFeed = `<?xml version="1.0"?><rss><channel>
+      <item><title>Tai Tzu-ying shines at 2020 Badminton Championships</title><link>https://example.com/old</link><guid>old</guid><pubDate>Sun, 20 Sep 2020 12:00:00 GMT</pubDate></item>
+      <item><title>Kazakhstan prepares for 2026 Chess Championships</title><link>https://example.com/wrong</link><guid>wrong</guid><pubDate>Sun, 20 Sep 2026 12:00:00 GMT</pubDate></item>
+      <item><title>Draw published for 2026 World Badminton Championships</title><link>https://example.com/right</link><guid>right</guid><pubDate>Sun, 20 Sep 2026 12:00:00 GMT</pubDate></item>
+    </channel></rss>`;
+    let requestedUrl = "";
+    const collector = new GoogleNewsCollector(async (input) => {
+      requestedUrl = String(input);
+      return new Response(currentFeed, { status: 200 });
+    });
+
+    const details = await collector.start("2026 badminton championships", ["news"]);
+    const posts = await collector.collect();
+
+    expect(details.searchMode).toBe("live");
+    expect(new URL(requestedUrl).searchParams.get("q")).toBe(
+      '2026 "badminton championships" when:30d',
+    );
+    expect(posts.map((item) => item.text)).toEqual([
+      "Draw published for 2026 World Badminton Championships",
+    ]);
   });
 });

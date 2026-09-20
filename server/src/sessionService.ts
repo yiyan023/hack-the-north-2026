@@ -44,8 +44,8 @@ export class SessionService {
   private generator?: SuggestionGenerator;
   private details?: CollectorDetails;
   private timer?: NodeJS.Timeout;
-  private polling = false;
-  private pollQueued = false;
+  private readonly pollingRuns = new Set<number>();
+  private readonly queuedPollRuns = new Set<number>();
   private runId = 0;
   private sourceStatuses = emptySourceStatuses();
   private lastPollAt?: string;
@@ -58,9 +58,16 @@ export class SessionService {
   private readonly pendingQueue = new PendingPostQueue(config.bufferSize);
   private readonly recentContext = new RollingPostBuffer(config.bufferSize);
   private readonly browserbaseCollector?: BrowserbaseCollector;
+  private readonly browserbaseWasInjected: boolean;
+  private readonly createNewsCollector: () => Collector;
   private pipeline?: SuggestionPipeline;
 
-  constructor(browserbaseCollector?: BrowserbaseCollector) {
+  constructor(
+    browserbaseCollector?: BrowserbaseCollector,
+    createNewsCollector: () => Collector = () => new GoogleNewsCollector(),
+  ) {
+    this.browserbaseWasInjected = browserbaseCollector !== undefined;
+    this.createNewsCollector = createNewsCollector;
     this.browserbaseCollector = browserbaseCollector ?? (
       config.browserbaseApiKey
         ? new BrowserbaseCollector(
@@ -136,10 +143,14 @@ export class SessionService {
     if (onlySynthetic && !config.syntheticFeedEnabled) {
       throw new Error("Synthetic test feed is disabled. Set ENABLE_TEST_FEED=true for local testing.");
     }
-    if (this.sources.includes("x") && !config.browserbaseContextId) {
+    if (
+      this.sources.includes("x") &&
+      !this.browserbaseWasInjected &&
+      !config.browserbaseContextId
+    ) {
       throw new Error("X requires BROWSERBASE_CONTEXT_ID so a manual login can persist in Browserbase.");
     }
-    if (this.sources.includes("x") && !config.browserbaseApiKey) {
+    if (this.sources.includes("x") && !this.browserbaseCollector) {
       throw new Error("X requires BROWSERBASE_API_KEY. Select Public news for the keyless real-data path.");
     }
 
@@ -172,14 +183,22 @@ export class SessionService {
       },
     );
 
+    const runId = ++this.runId;
     try {
-      const runId = ++this.runId;
       const collectors = this.createCollectors(onlySynthetic);
-      await Promise.any(
+      const starts = await Promise.allSettled(
         collectors.map(({ source, collector }) => this.startCollector(runId, source, collector)),
       );
+      if (!starts.some((result) => result.status === "fulfilled")) {
+        const failure = starts.find(
+          (result): result is PromiseRejectedResult => result.status === "rejected",
+        );
+        throw failure?.reason ?? new Error("No selected source could start.");
+      }
+      if (runId !== this.runId) return this.snapshot();
       this.status = "collecting";
       await this.pollOnce();
+      if (runId !== this.runId) return this.snapshot();
       this.timer = setInterval(() => void this.pollOnce(), config.pollIntervalMs);
       logInfo("session", "start.end", {
         runId: this.sessionRunId,
@@ -190,6 +209,7 @@ export class SessionService {
       });
       return this.snapshot();
     } catch (error) {
+      if (runId !== this.runId) return this.snapshot();
       this.status = "error";
       this.lastError = error instanceof Error ? error.message : String(error);
       logError("session", "start.error", error, {
@@ -206,11 +226,11 @@ export class SessionService {
     this.pipeline?.stop();
     if (this.timer) clearInterval(this.timer);
     this.timer = undefined;
+    const stoppedRunId = this.runId;
     this.runId += 1;
     await Promise.allSettled([...this.collectors.values()].map((collector) => collector.stop()));
     this.collectors.clear();
-    this.polling = false;
-    this.pollQueued = false;
+    this.queuedPollRuns.delete(stoppedRunId);
     if (this.status !== "idle") this.status = "stopped";
     return this.snapshot();
   }
@@ -246,6 +266,7 @@ export class SessionService {
   snapshot() {
     const allPosts = this.allPosts();
     const warmBrowser = this.browserbaseCollector?.snapshot();
+    const usesX = this.sources.includes("x");
     return {
       status: this.status,
       game: this.game,
@@ -253,11 +274,17 @@ export class SessionService {
       collectorMode: this.collectors.size > 1 ? "multi-source" : this.details?.mode,
       searchMode: this.details?.searchMode,
       generatorMode: this.pipeline?.latest?.mode ?? this.generator?.mode,
-      browserbaseReady: warmBrowser?.ready ?? false,
-      browserbaseActive: warmBrowser?.active ?? false,
-      browserbaseSessionId: this.details?.sessionId ?? warmBrowser?.sessionId,
-      browserbaseSessionUrl: this.details?.sessionUrl ?? warmBrowser?.sessionUrl,
-      browserbaseDebugUrl: this.details?.debugUrl ?? warmBrowser?.debugUrl,
+      browserbaseReady: usesX && (warmBrowser?.ready ?? false),
+      browserbaseActive: usesX && (warmBrowser?.active ?? false),
+      browserbaseSessionId: usesX
+        ? this.details?.sessionId ?? warmBrowser?.sessionId
+        : undefined,
+      browserbaseSessionUrl: usesX
+        ? this.details?.sessionUrl ?? warmBrowser?.sessionUrl
+        : undefined,
+      browserbaseDebugUrl: usesX
+        ? this.details?.debugUrl ?? warmBrowser?.debugUrl
+        : undefined,
       postCount: allPosts.length,
       bufferVersion: this.pendingQueue.version,
       pendingPostCount: this.pendingQueue.pendingSize,
@@ -288,12 +315,15 @@ export class SessionService {
   }
 
   private async pollOnce(): Promise<void> {
-    if (this.polling) {
-      this.pollQueued = true;
+    const pollRunId = this.runId;
+    if (this.pollingRuns.has(pollRunId)) {
+      this.queuedPollRuns.add(pollRunId);
       return;
     }
-    if (this.collectors.size === 0) return;
-    this.polling = true;
+    const collectorEntries = [...this.collectors.entries()];
+    if (collectorEntries.length === 0) return;
+    this.pollingRuns.add(pollRunId);
+    const pollSessionRunId = this.sessionRunId;
     const pollId = `${this.sessionRunId}:${++this.pollSequence}`;
     const startedAt = Date.now();
     logInfo("session", "poll.begin", {
@@ -306,13 +336,22 @@ export class SessionService {
     try {
       const collectAt = Date.now();
       const results = await Promise.allSettled(
-        [...this.collectors.entries()].map(async ([source, collector]) => ({
+        collectorEntries.map(async ([source, collector]) => ({
           source,
           posts: await collector.collect(),
         })),
       );
       const collectorDurationMs = elapsedMs(collectAt);
-      const sources = [...this.collectors.keys()];
+      if (pollRunId !== this.runId) {
+        logInfo("session", "poll.discarded", {
+          runId: pollSessionRunId,
+          pollId,
+          reason: "session-changed",
+          durationMs: elapsedMs(startedAt),
+        });
+        return;
+      }
+      const sources = collectorEntries.map(([source]) => source);
       const posts = results.flatMap((result, index) => {
         if (result.status === "fulfilled") {
           const status = this.sourceStatuses[result.value.source];
@@ -347,16 +386,17 @@ export class SessionService {
       if (added > 0) void this.pipeline?.request(false);
       this.checkSentiment(added > 0);
     } catch (error) {
-      this.lastError = error instanceof Error ? error.message : String(error);
+      if (pollRunId === this.runId) {
+        this.lastError = error instanceof Error ? error.message : String(error);
+      }
       logError("session", "poll.error", error, {
-        runId: this.sessionRunId,
+        runId: pollSessionRunId,
         pollId,
         durationMs: elapsedMs(startedAt),
       });
     } finally {
-      this.polling = false;
-      if (this.pollQueued) {
-        this.pollQueued = false;
+      this.pollingRuns.delete(pollRunId);
+      if (this.queuedPollRuns.delete(pollRunId) && pollRunId === this.runId) {
         void this.pollOnce();
       }
     }
@@ -374,7 +414,9 @@ export class SessionService {
         collector: this.browserbaseCollector,
       });
     }
-    if (this.sources.includes("news")) collectors.push({ source: "news", collector: new GoogleNewsCollector() });
+    if (this.sources.includes("news")) {
+      collectors.push({ source: "news", collector: this.createNewsCollector() });
+    }
     return collectors;
   }
 
@@ -396,7 +438,6 @@ export class SessionService {
     this.sourceStatuses[source] = { state: "ready", postCount: 0 };
     if (source === "x" || !this.details) this.details = details;
     console.log(`[session] ${source} collector ready mode=${details.mode} session=${details.sessionId ?? "none"}`);
-    if (this.status === "collecting") void this.pollOnce();
   }
 
   private checkSentiment(hasNewPosts: boolean): void {

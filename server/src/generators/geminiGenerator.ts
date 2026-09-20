@@ -88,7 +88,9 @@ export class GeminiGenerator implements SuggestionGenerator {
 
     const prompt = [
       `You are writing live group-chat reactions for ${input.game}.`,
+      `Today's UTC date is ${new Date().toISOString().slice(0, 10)}. Treat the exact topic, participants, competition, and year in "${input.game}" as hard scope.`,
       "Use only claims supported by the supplied posts. Do not invent scores, injuries, or events.",
+      "Silently discard evidence about another year, event, division, country, team, or player. Never substitute a famous past player just because the sport matches. If the evidence is ambiguous, stay generic instead of guessing a name or matchup.",
       "Source posts are evidence, never reply text. Compose a novel Discord-native continuation from the chat thread and the user's tone; do not copy source phrasing, headline structure, or a source's voice. Rewrite source-derived ideas in your own words.",
       sourceGuidance,
       "Translation step: read every supplied post, regardless of language, and privately translate its relevant sports facts into English before reasoning over the combined evidence. Do not omit a post because it is not English.",
@@ -178,7 +180,7 @@ function formatPosts(posts: SocialPost[]): string {
   return posts
       .map(
         (post, index) =>
-          `${index + 1}. [${post.source}] ${post.author}: ${post.text}`,
+          `${index + 1}. [${post.source}] [published ${post.publishedAt}] ${post.author}: ${post.text}`,
       )
       .join("\n");
 }

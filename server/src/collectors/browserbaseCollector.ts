@@ -27,6 +27,7 @@ export class BrowserbaseCollector implements Collector {
   private operation = Promise.resolve();
   private pages = new Map<Source, Page>();
   private active = false;
+  private activeQuery = "";
   private hasCollectedLoadedPages = false;
   private collectionSequence = 0;
 
@@ -46,6 +47,7 @@ export class BrowserbaseCollector implements Collector {
       this.hasCollectedLoadedPages = false;
       this.collectionSequence = 0;
       const searchMode = classifySearchMode(query);
+      this.activeQuery = query;
       const browserSources = sources.filter(
         (source): source is "x" => source === "x",
       );
@@ -260,14 +262,18 @@ export class BrowserbaseCollector implements Collector {
         }
         const extractionAt = Date.now();
         const extracted = await this.extractXPosts(page);
+        const relevant = extracted.filter((post) =>
+          matchesLiveQuery(post.text, this.activeQuery),
+        );
         logInfo("browserbase", "extract.end", {
           collectionId,
           source,
-          posts: extracted.length,
+          posts: relevant.length,
+          rejectedPosts: extracted.length - relevant.length,
           durationMs: elapsedMs(extractionAt),
           sourceTotalMs: elapsedMs(sourceAt),
         });
-        return extracted;
+        return relevant;
       }),
     );
 
@@ -438,3 +444,42 @@ export class BrowserbaseCollector implements Collector {
   }
 
 }
+
+function matchesLiveQuery(text: string, query: string) {
+  const targetYears = new Set(query.match(/\b(?:19|20)\d{2}\b/g) ?? []);
+  const postYears = text.match(/\b(?:19|20)\d{2}\b/g) ?? [];
+  if (
+    targetYears.size > 0 &&
+    postYears.length > 0 &&
+    !postYears.some((year) => targetYears.has(year))
+  ) {
+    return false;
+  }
+
+  const generic = new Set([
+    "championship",
+    "championships",
+    "cup",
+    "final",
+    "finals",
+    "game",
+    "live",
+    "match",
+    "open",
+    "the",
+    "tournament",
+    "versus",
+  ]);
+  const distinctive = (query.toLowerCase().match(/[\p{L}\p{N}'-]+/gu) ?? [])
+    .filter((token) => token.length > 2)
+    .filter((token) => !/^\d{4}$/.test(token) && !generic.has(token));
+  if (distinctive.length === 0) return true;
+
+  const normalizedText = text.toLowerCase();
+  const matchingTokens = distinctive.filter((token) =>
+    normalizedText.includes(token),
+  ).length;
+  return matchingTokens >= Math.ceil(distinctive.length * 0.6);
+}
+
+export const testing = { matchesLiveQuery };
