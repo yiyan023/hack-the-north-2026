@@ -51,7 +51,7 @@ The default Public news source works without an API key and uses real Google New
 
 The app never replaces source evidence with demo data. If Gemini rejects its credential, it creates short local copy using only the real evidence displayed on the page and labels that mode clearly.
 
-The default model is `gemini-3.8-flash` and can be changed with `GEMINI_MODEL`.
+The default model is `gemini-3.5-flash-lite` and can be changed with `GEMINI_MODEL`.
 
 For an end-to-end test without a live game, set `ENABLE_TEST_FEED=true` in your
 local `.env`, restart the server, select **Synthetic test feed**, and start
@@ -134,7 +134,7 @@ the `.env` file:
 - `GEMINI_API_KEY`: a valid key created in Google AI Studio or supplied through
   the hackathon. The key used during the September 19 test returned
   `API_KEY_INVALID`, so generate a fresh key for the recording.
-- `GEMINI_MODEL=gemini-3.8-flash`.
+- `GEMINI_MODEL=gemini-3.5-flash-lite`.
 
 The Browserbase context is stored in Browserbase, not on this Mac. Reusing its
 context ID and a key from the same Browserbase project should preserve the X

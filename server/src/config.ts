@@ -37,7 +37,7 @@ export const config = {
   browserbaseContextId: process.env.BROWSERBASE_CONTEXT_ID ?? "",
   syntheticFeedEnabled: process.env.ENABLE_TEST_FEED === "true",
   geminiApiKey: process.env.GEMINI_API_KEY ?? "",
-  geminiModel: process.env.GEMINI_MODEL ?? "gemini-3.8-flash",
+  geminiModel: process.env.GEMINI_MODEL ?? "gemini-3.5-flash-lite",
   pollIntervalMs: integer("POLL_INTERVAL_MS", 12_000),
   bufferSize: integer("BUFFER_SIZE", 100),
   postsPerBatch: integer("POSTS_PER_BATCH", 10),
