@@ -1,5 +1,11 @@
 import { Browserbase } from "@browserbasehq/sdk";
-import { chromium, type Browser, type Page } from "playwright-core";
+import {
+  chromium,
+  type Browser,
+  type BrowserContext,
+  type Page,
+} from "playwright-core";
+import { config } from "../config.js";
 import { elapsedMs, logError, logInfo, logWarn } from "../observability.js";
 import { buildSearchUrl, classifySearchMode } from "../searchMode.js";
 import type {
@@ -13,7 +19,14 @@ export class BrowserbaseCollector implements Collector {
   private readonly client: Browserbase;
   private readonly contextId: string;
   private browser?: Browser;
+  private browserContext?: BrowserContext;
+  private sessionId?: string;
+  private sessionUrl?: string;
+  private debugUrl?: string;
+  private initialization?: Promise<void>;
+  private operation = Promise.resolve();
   private pages = new Map<Source, Page>();
+  private active = false;
   private hasCollectedLoadedPages = false;
   private collectionSequence = 0;
 
@@ -22,28 +35,125 @@ export class BrowserbaseCollector implements Collector {
     this.contextId = contextId;
   }
 
+  async prewarm(): Promise<CollectorDetails> {
+    await this.ensureSession();
+    return this.details(classifySearchMode("live"));
+  }
+
   async start(query: string, sources: Source[]): Promise<CollectorDetails> {
-    const startAt = Date.now();
+    return this.runExclusive(async () => {
+      const startAt = Date.now();
+      this.hasCollectedLoadedPages = false;
+      this.collectionSequence = 0;
+      const searchMode = classifySearchMode(query);
+      const browserSources = sources.filter(
+        (source): source is "x" => source === "x",
+      );
+      if (browserSources.length === 0) {
+        throw new Error("Select X before starting Browserbase.");
+      }
+      logInfo("browserbase", "collector.start.begin", {
+        query,
+        sources: browserSources.join(","),
+        warmSession: Boolean(this.browser),
+      });
+
+      await this.ensureSession();
+      const page = this.pages.get("x");
+      if (!page) throw new Error("Browserbase warm session has no X page");
+      const targetUrl = buildSearchUrl("x", query, searchMode);
+      if (page.url() !== targetUrl) {
+        const navigationAt = Date.now();
+        await page.goto(targetUrl, {
+          waitUntil: "domcontentloaded",
+          timeout: 30_000,
+        });
+        logInfo("browserbase", "navigation.domcontentloaded", {
+          sessionId: this.sessionId,
+          source: "x",
+          url: page.url(),
+          durationMs: elapsedMs(navigationAt),
+        });
+        await this.waitForXResults(page);
+      } else {
+        logInfo("browserbase", "navigation.reused", {
+          sessionId: this.sessionId,
+          source: "x",
+          url: page.url(),
+        });
+      }
+
+      this.active = true;
+      logInfo("browserbase", "collector.start.end", {
+        sessionId: this.sessionId,
+        sources: browserSources.join(","),
+        durationMs: elapsedMs(startAt),
+      });
+      return this.details(searchMode);
+    });
+  }
+
+  async collect(): Promise<SocialPost[]> {
+    return this.runExclusive(() => this.collectActivePage());
+  }
+
+  async stop(): Promise<void> {
+    this.active = false;
     this.hasCollectedLoadedPages = false;
-    this.collectionSequence = 0;
-    const searchMode = classifySearchMode(query);
-    const browserSources = sources.filter(
-      (source): source is "x" => source === "x",
-    );
-    if (browserSources.length === 0) {
-      throw new Error("Select X before starting Browserbase.");
-    }
-    logInfo("browserbase", "collector.start.begin", {
-      query,
-      sources: browserSources.join(","),
+    logInfo("browserbase", "collector.paused", {
+      sessionId: this.sessionId,
+      pages: this.pages.size,
+    });
+  }
+
+  async shutdown(): Promise<void> {
+    await this.runExclusive(async () => {
+      const shutdownAt = Date.now();
+      await this.initialization?.catch(() => undefined);
+      this.active = false;
+      this.hasCollectedLoadedPages = false;
+      await this.resetSession();
+      logInfo("browserbase", "session.shutdown", {
+        durationMs: elapsedMs(shutdownAt),
+      });
+    });
+  }
+
+  snapshot() {
+    return {
+      ready: Boolean(this.browser && this.sessionId),
+      sessionId: this.sessionId,
+      sessionUrl: this.sessionUrl,
+      debugUrl: this.debugUrl,
+      active: this.active,
+    };
+  }
+
+  private async ensureSession(): Promise<void> {
+    if (this.browser && this.sessionId) return;
+    if (this.initialization) return this.initialization;
+    this.initialization = this.initializeSession().catch(async (error) => {
+      await this.resetSession();
+      this.initialization = undefined;
+      throw error;
+    });
+    return this.initialization;
+  }
+
+  private async initializeSession(): Promise<void> {
+    const initializeAt = Date.now();
+    logInfo("browserbase", "prewarm.begin", {
       context: this.contextId ? "configured" : "missing",
-      persist: false,
+      region: config.browserbaseRegion,
+      timeoutSec: config.browserbaseSessionTimeoutSec,
     });
     let session;
     const createAt = Date.now();
     try {
-      session = await this.client.sessions.create(
-        this.contextId
+      const sessionParams: Browserbase.SessionCreateParams = {
+        region: config.browserbaseRegion,
+        api_timeout: config.browserbaseSessionTimeoutSec,
+        ...(this.contextId
           ? {
               browserSettings: {
                 context: {
@@ -53,8 +163,9 @@ export class BrowserbaseCollector implements Collector {
                 },
               },
             }
-          : undefined,
-      );
+          : {}),
+      };
+      session = await this.client.sessions.create(sessionParams);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       logError("browserbase", "session.create.error", error, {
@@ -74,68 +185,50 @@ export class BrowserbaseCollector implements Collector {
 
     const connectAt = Date.now();
     this.browser = await chromium.connectOverCDP(session.connectUrl);
+    this.sessionId = session.id;
+    this.sessionUrl = `https://browserbase.com/sessions/${session.id}`;
     logInfo("browserbase", "cdp.connect.end", {
       sessionId: session.id,
       durationMs: elapsedMs(connectAt),
     });
 
-    const context = this.browser.contexts()[0];
-    if (!context) throw new Error("Browserbase returned no browser context");
+    this.browserContext = this.browser.contexts()[0];
+    if (!this.browserContext) throw new Error("Browserbase returned no browser context");
 
-    const existingPage = context.pages()[0];
-    for (const [index, source] of browserSources.entries()) {
+    const page = this.browserContext.pages()[0] ?? await this.browserContext.newPage();
+    this.pages.set("x", page);
+    if (!page.url().startsWith("https://x.com/")) {
       const navigationAt = Date.now();
-      const page = index === 0 && existingPage ? existingPage : await context.newPage();
-      await page.goto(buildSearchUrl(source, query, searchMode), {
+      await page.goto("https://x.com/home", {
         waitUntil: "domcontentloaded",
         timeout: 30_000,
       });
-      logInfo("browserbase", "navigation.domcontentloaded", {
+      logInfo("browserbase", "prewarm.navigation.end", {
         sessionId: session.id,
-        source,
         url: page.url(),
         durationMs: elapsedMs(navigationAt),
       });
-      if (source === "x") {
-        await this.waitForXResults(page);
-      }
-      this.pages.set(source, page);
     }
 
-    let debugUrl: string | undefined;
-    const debugAt = Date.now();
-    try {
-      const debug = await this.client.sessions.debug(session.id);
-      debugUrl = debug.debuggerFullscreenUrl;
-      logInfo("browserbase", "debug-link.end", {
-        sessionId: session.id,
-        durationMs: elapsedMs(debugAt),
-      });
-    } catch (error) {
-      logWarn("browserbase", "debug-link.unavailable", {
-        sessionId: session.id,
-        durationMs: elapsedMs(debugAt),
-        error: error instanceof Error ? error.message : String(error),
-      });
-      // Collection still works if a debug URL cannot be created.
-    }
-
-    logInfo("browserbase", "collector.start.end", {
+    void this.loadDebugUrl(session.id);
+    logInfo("browserbase", "prewarm.end", {
       sessionId: session.id,
-      sources: browserSources.join(","),
-      durationMs: elapsedMs(startAt),
+      durationMs: elapsedMs(initializeAt),
     });
+  }
 
+  private details(searchMode: ReturnType<typeof classifySearchMode>): CollectorDetails {
     return {
       mode: "browserbase",
       searchMode,
-      sessionId: session.id,
-      sessionUrl: `https://browserbase.com/sessions/${session.id}`,
-      debugUrl,
+      sessionId: this.sessionId,
+      sessionUrl: this.sessionUrl,
+      debugUrl: this.debugUrl,
     };
   }
 
-  async collect(): Promise<SocialPost[]> {
+  private async collectActivePage(): Promise<SocialPost[]> {
+    if (!this.active) return [];
     // start() already navigates every page and waits for its results. Extract
     // that rendered DOM on the first collection instead of paying for an
     // immediate duplicate reload. Scheduled collections still reload so they
@@ -195,11 +288,45 @@ export class BrowserbaseCollector implements Collector {
     return posts;
   }
 
-  async stop(): Promise<void> {
+  private async loadDebugUrl(sessionId: string): Promise<void> {
+    const debugAt = Date.now();
+    try {
+      const debug = await this.client.sessions.debug(sessionId);
+      if (this.sessionId === sessionId) {
+        this.debugUrl = debug.debuggerFullscreenUrl;
+      }
+      logInfo("browserbase", "debug-link.end", {
+        sessionId,
+        durationMs: elapsedMs(debugAt),
+      });
+    } catch (error) {
+      logWarn("browserbase", "debug-link.unavailable", {
+        sessionId,
+        durationMs: elapsedMs(debugAt),
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  private runExclusive<T>(operation: () => Promise<T>): Promise<T> {
+    const result = this.operation.then(operation, operation);
+    this.operation = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    return result;
+  }
+
+  private async resetSession(): Promise<void> {
+    const browser = this.browser;
     this.pages.clear();
-    this.hasCollectedLoadedPages = false;
-    await this.browser?.close().catch(() => undefined);
     this.browser = undefined;
+    this.browserContext = undefined;
+    this.sessionId = undefined;
+    this.sessionUrl = undefined;
+    this.debugUrl = undefined;
+    this.initialization = undefined;
+    await browser?.close().catch(() => undefined);
   }
 
   private async extractXPosts(page: Page): Promise<SocialPost[]> {

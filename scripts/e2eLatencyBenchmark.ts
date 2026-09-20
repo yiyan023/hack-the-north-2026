@@ -13,6 +13,7 @@ const games = process.env.BENCHMARK_GAMES
 
 type Result = {
   game: string;
+  browserbaseSessionId?: string;
   searchMode?: string;
   postCount: number;
   generatorMode?: string;
@@ -22,9 +23,7 @@ type Result = {
   totalMs: number;
 };
 
-async function benchmarkGame(game: string): Promise<Result> {
-  const service = new SessionService();
-
+async function benchmarkGame(service: SessionService, game: string): Promise<Result> {
   try {
     const startAt = performance.now();
     const session = await service.start({
@@ -40,6 +39,7 @@ async function benchmarkGame(game: string): Promise<Result> {
     const completedAt = performance.now();
     const result: Result = {
       game,
+      browserbaseSessionId: session.browserbaseSessionId,
       searchMode: session.searchMode,
       postCount: service.posts(50).length,
       generatorMode: deck?.mode,
@@ -71,9 +71,30 @@ async function main() {
     );
   }
 
+  const service = new SessionService();
   const results: Result[] = [];
-  for (const game of games) {
-    results.push(await benchmarkGame(game));
+  let prewarmMs = 0;
+  try {
+    const prewarmAt = performance.now();
+    const prewarm = await service.prewarmBrowserbase();
+    prewarmMs = Math.round(performance.now() - prewarmAt);
+    if (!prewarm.ready) {
+      throw new Error(`Browserbase prewarm failed: ${prewarm.reason}`);
+    }
+
+    for (const game of games) {
+      results.push(await benchmarkGame(service, game));
+    }
+  } finally {
+    await service.shutdown();
+  }
+
+  const sessionIds = new Set(
+    results.map((result) => result.browserbaseSessionId).filter(Boolean),
+  );
+  const sessionReused = sessionIds.size === 1 && results.length > 0;
+  if (!sessionReused) {
+    throw new Error("Expected every game to reuse one Browserbase session.");
   }
 
   const averageTotalMs = Math.round(
@@ -83,11 +104,14 @@ async function main() {
     label: process.env.BENCHMARK_LABEL ?? "current",
     model: config.geminiModel,
     thinkingMode: "fast",
+    prewarmMs,
+    sessionReused,
     results,
     averageTotalMs,
   };
 
   console.table(results);
+  console.log(`Browserbase prewarm: ${prewarmMs} ms; one session reused: ${sessionReused}`);
   console.log(`E2E_BENCHMARK_JSON=${JSON.stringify(report)}`);
 }
 

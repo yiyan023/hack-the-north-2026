@@ -43,7 +43,44 @@ export class SessionService {
   private pollSequence = 0;
   private readonly pendingQueue = new PendingPostQueue(config.bufferSize);
   private readonly recentContext = new RollingPostBuffer(config.bufferSize);
+  private readonly browserbaseCollector?: BrowserbaseCollector;
   private pipeline?: SuggestionPipeline;
+
+  constructor(browserbaseCollector?: BrowserbaseCollector) {
+    this.browserbaseCollector = browserbaseCollector ?? (
+      config.browserbaseApiKey
+        ? new BrowserbaseCollector(
+            config.browserbaseApiKey,
+            config.browserbaseContextId,
+          )
+        : undefined
+    );
+  }
+
+  async prewarmBrowserbase(): Promise<{
+    ready: boolean;
+    reason?: string;
+    sessionId?: string;
+    sessionUrl?: string;
+    debugUrl?: string;
+  }> {
+    if (!this.browserbaseCollector) {
+      return { ready: false, reason: "BROWSERBASE_API_KEY is not configured" };
+    }
+    try {
+      const details = await this.browserbaseCollector.prewarm();
+      return { ready: true, ...details };
+    } catch (error) {
+      this.lastError = error instanceof Error ? error.message : String(error);
+      logError("session", "browserbase.prewarm.error", error);
+      return { ready: false, reason: this.lastError };
+    }
+  }
+
+  async shutdown() {
+    await this.stop();
+    await this.browserbaseCollector?.shutdown();
+  }
 
   async start(input: {
     game: string;
@@ -95,10 +132,10 @@ export class SessionService {
       ? new SyntheticCollector()
       : onlyPublicNews
       ? new GoogleNewsCollector()
-      : new BrowserbaseCollector(
-          config.browserbaseApiKey,
-          config.browserbaseContextId,
-        );
+      : this.browserbaseCollector;
+    if (!this.collector) {
+      throw new Error("Browserbase is not configured.");
+    }
     const localGenerator = new EvidenceGenerator();
     this.generator = config.geminiApiKey
       ? new ResilientGenerator(
@@ -197,6 +234,7 @@ export class SessionService {
 
   snapshot() {
     const allPosts = this.allPosts();
+    const warmBrowser = this.browserbaseCollector?.snapshot();
     return {
       status: this.status,
       game: this.game,
@@ -204,9 +242,11 @@ export class SessionService {
       collectorMode: this.details?.mode,
       searchMode: this.details?.searchMode,
       generatorMode: this.pipeline?.latest?.mode ?? this.generator?.mode,
-      browserbaseSessionId: this.details?.sessionId,
-      browserbaseSessionUrl: this.details?.sessionUrl,
-      browserbaseDebugUrl: this.details?.debugUrl,
+      browserbaseReady: warmBrowser?.ready ?? false,
+      browserbaseActive: warmBrowser?.active ?? false,
+      browserbaseSessionId: this.details?.sessionId ?? warmBrowser?.sessionId,
+      browserbaseSessionUrl: this.details?.sessionUrl ?? warmBrowser?.sessionUrl,
+      browserbaseDebugUrl: this.details?.debugUrl ?? warmBrowser?.debugUrl,
       postCount: allPosts.length,
       bufferVersion: this.pendingQueue.version,
       pendingPostCount: this.pendingQueue.pendingSize,
