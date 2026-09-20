@@ -70,5 +70,6 @@ export interface SuggestionGenerator {
     traceId?: string;
     toneExamples: string[];
     replyTo: string;
+    avoidPhrases?: string[];
   }): Promise<BatchResult>;
 }

@@ -25,6 +25,7 @@ export class ResilientGenerator implements SuggestionGenerator {
     traceId?: string;
     toneExamples: string[];
     replyTo: string;
+    avoidPhrases?: string[];
   }): Promise<BatchResult> {
     if (this.localActive) return this.local.generateBatch(input);
     const startedAt = Date.now();

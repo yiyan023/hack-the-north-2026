@@ -36,6 +36,25 @@ describe("SuggestionPipeline", () => {
     ]);
   });
 
+  it("skips suggestions that repeat a recent chat phrase", () => {
+    const { pickSuggestions } = testing;
+    const suggestions = pickSuggestions([{
+      moment: "test",
+      confidence: 1,
+      suggestions: [
+        { style: "safe", text: "their defense is completely cooked tonight" },
+        { style: "safe", text: "that back line is getting exposed" },
+        { style: "funny", text: "someone unplugged the defending controller" },
+        { style: "spicy", text: "the defenders need a group project meeting" },
+      ],
+    }], ["their defense is completely cooked tonight"]);
+
+    expect(suggestions.find((suggestion) => suggestion.style === "safe")?.text).toBe(
+      "that back line is getting exposed",
+    );
+    expect(suggestions).toHaveLength(3);
+  });
+
   it("balances sources and rotates to unseen evidence on refresh", () => {
     const { selectDiversePosts } = testing;
     const mixed = [

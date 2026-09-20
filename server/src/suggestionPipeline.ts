@@ -31,6 +31,7 @@ export class SuggestionPipeline {
   private stopped = false;
   private generationSequence = 0;
   private usedPostIds = new Set<string>();
+  private recentSuggestionTexts: string[] = [];
 
   constructor(
     private readonly queue: PendingPostQueue,
@@ -141,6 +142,10 @@ export class SuggestionPipeline {
       ? chunk(posts, this.options.postsPerBatch)
       : [[]];
     const context = this.getContext();
+    // Chat history is a reply target. Only prior generated suggestions belong
+    // on the avoid-list; otherwise the overlap guard rejects good replies that
+    // deliberately engage with the conversation.
+    const avoidPhrases = this.recentSuggestionTexts.slice(-24);
     const waits = posts.map((post) =>
       Math.max(0, Date.now() - Date.parse(post.collectedAt)),
     );
@@ -176,6 +181,7 @@ export class SuggestionPipeline {
             traceId,
             toneExamples: context.toneExamples,
             replyTo: context.replyTo,
+            avoidPhrases,
           });
           logInfo("pipeline", "batch.end", {
             generationId,
@@ -189,15 +195,22 @@ export class SuggestionPipeline {
       );
 
       const selectionAt = Date.now();
-      const suggestions = pickSuggestions(results);
+      const suggestions = pickSuggestions(results, avoidPhrases);
       const strongest = [...results].sort((a, b) => b.confidence - a.confidence)[0];
       if (!strongest || suggestions.length !== 3) {
-        throw new Error("Suggestion generation returned an incomplete result.");
+        this.generationError =
+          "Suggestions overlapped recent chat or prior suggestions; waiting for fresher evidence.";
+        this.queue.retry(posts);
+        return this.deck;
       }
 
       const acknowledged = this.queue.acknowledge(posts);
       this.recentContext.add(acknowledged);
       for (const post of posts) this.usedPostIds.add(post.id);
+      this.recentSuggestionTexts = [
+        ...this.recentSuggestionTexts,
+        ...suggestions.map((suggestion) => suggestion.text),
+      ].slice(-24);
       const nextDeck: SuggestionDeck = {
         game: context.game,
         moment: strongest.moment,
@@ -286,7 +299,7 @@ async function mapWithConcurrency<T, R>(
   return results;
 }
 
-function pickSuggestions(results: BatchResult[]) {
+function pickSuggestions(results: BatchResult[], avoidPhrases: string[] = []) {
   const styles: SuggestionStyle[] = ["safe", "funny", "spicy"];
   return styles.flatMap((style) => {
     const candidate = results
@@ -295,12 +308,53 @@ function pickSuggestions(results: BatchResult[]) {
           .filter((suggestion) => suggestion.style === style)
           .map((suggestion) => ({ ...suggestion, confidence: result.confidence })),
       )
-      .sort((a, b) => b.confidence - a.confidence)[0];
+      .sort((a, b) => b.confidence - a.confidence)
+      .find((suggestion) => !substantiallyOverlaps(suggestion.text, avoidPhrases));
 
     return candidate
       ? [{ id: `${style}-${crypto.randomUUID()}`, style, text: withoutTrailingPeriod(candidate.text) }]
       : [];
   });
+}
+
+function substantiallyOverlaps(candidate: string, avoidPhrases: string[]) {
+  const candidateWords = meaningfulWords(candidate);
+  if (candidateWords.length < 3) return false;
+  const candidateText = candidateWords.join(" ");
+  const candidatePhrases = wordPhrases(candidateWords);
+
+  return avoidPhrases.some((phrase) => {
+    const avoidedWords = meaningfulWords(phrase);
+    if (avoidedWords.length < 3) return false;
+    const avoidedText = avoidedWords.join(" ");
+    if (candidateText.includes(avoidedText) || avoidedText.includes(candidateText)) {
+      return true;
+    }
+
+    const sharedWords = candidateWords.filter((word) => avoidedWords.includes(word));
+    if (sharedWords.length >= 3 && sharedWords.length / Math.min(candidateWords.length, avoidedWords.length) >= 0.65) {
+      return true;
+    }
+
+    const avoidedPhrases = new Set(wordPhrases(avoidedWords));
+    return candidatePhrases.some((value) => avoidedPhrases.has(value));
+  });
+}
+
+function meaningfulWords(text: string) {
+  const ignored = new Set([
+    "a", "an", "and", "are", "at", "be", "but", "for", "from", "has", "have",
+    "he", "her", "him", "i", "in", "is", "it", "its", "just", "like", "of", "on",
+    "or", "our", "she", "that", "the", "their", "them", "they", "this", "to", "was",
+    "we", "with", "you", "your",
+  ]);
+  return (text.toLowerCase().match(/[a-z0-9]+/g) ?? []).filter(
+    (word) => word.length > 1 && !ignored.has(word),
+  );
+}
+
+function wordPhrases(words: string[]) {
+  return words.slice(0, -2).map((_, index) => words.slice(index, index + 3).join(" "));
 }
 
 function withoutTrailingPeriod(text: string) {
