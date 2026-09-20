@@ -30,6 +30,7 @@ export class SuggestionPipeline {
   private drainTimer?: NodeJS.Timeout;
   private stopped = false;
   private generationSequence = 0;
+  private usedPostIds = new Set<string>();
 
   constructor(
     private readonly queue: PendingPostQueue,
@@ -127,7 +128,10 @@ export class SuggestionPipeline {
     this.generationError = undefined;
     this.lastAttemptAt = Date.now();
     const version = this.queue.version;
-    const posts = this.queue.claim(this.options.maxPosts);
+    const claimed = this.queue.claim(this.options.maxPosts);
+    const posts = selectDiversePosts(claimed, this.options.maxPosts, this.usedPostIds);
+    const unused = claimed.filter((post) => !posts.some((selected) => selected.id === post.id));
+    if (unused.length > 0) this.queue.retry(unused);
     const contextPosts = this.recentContext.latest(this.options.contextPosts);
     if (posts.length === 0 && (!force || contextPosts.length === 0)) {
       return this.deck;
@@ -193,6 +197,7 @@ export class SuggestionPipeline {
 
       const acknowledged = this.queue.acknowledge(posts);
       this.recentContext.add(acknowledged);
+      for (const post of posts) this.usedPostIds.add(post.id);
       const nextDeck: SuggestionDeck = {
         game: context.game,
         moment: strongest.moment,
@@ -302,4 +307,46 @@ function withoutTrailingPeriod(text: string) {
   return text.trim().replace(/\.+$/, "");
 }
 
-export const testing = { chunk, mapWithConcurrency, pickSuggestions };
+function selectDiversePosts(
+  allPosts: SocialPost[],
+  maximum: number,
+  usedPostIds: Set<string>,
+): SocialPost[] {
+  const unseen = allPosts.filter((post) => !usedPostIds.has(post.id));
+  // Once every buffered post has appeared in a generation, start a new cycle.
+  if (unseen.length === 0) usedPostIds.clear();
+
+  const fresh = unseen.length === 0 ? allPosts : unseen;
+  const freshIds = new Set(fresh.map((post) => post.id));
+  // Use every unseen item first, then fill any remaining slots from older
+  // evidence so a partial new poll still has enough context to generate from.
+  const candidates = fresh.length >= maximum
+    ? fresh
+    : [...fresh, ...allPosts.filter((post) => !freshIds.has(post.id))];
+  return roundRobinSources(candidates, maximum);
+}
+
+function roundRobinSources(posts: SocialPost[], maximum: number): SocialPost[] {
+  const queues = new Map<SocialPost["source"], SocialPost[]>();
+  for (const post of posts) {
+    const queue = queues.get(post.source) ?? [];
+    queue.push(post);
+    queues.set(post.source, queue);
+  }
+
+  const selected: SocialPost[] = [];
+  while (selected.length < maximum) {
+    let added = false;
+    for (const queue of queues.values()) {
+      const post = queue.shift();
+      if (!post) continue;
+      selected.push(post);
+      added = true;
+      if (selected.length === maximum) break;
+    }
+    if (!added) break;
+  }
+  return selected;
+}
+
+export const testing = { chunk, mapWithConcurrency, pickSuggestions, selectDiversePosts };

@@ -36,6 +36,28 @@ describe("SuggestionPipeline", () => {
     ]);
   });
 
+  it("balances sources and rotates to unseen evidence on refresh", () => {
+    const { selectDiversePosts } = testing;
+    const mixed = [
+      ...posts(4),
+      ...Array.from({ length: 4 }, (_, index) => ({
+        ...posts(1)[0]!,
+        id: `news:${index}`,
+        source: "news" as const,
+        text: `news observation ${index}`,
+      })),
+    ];
+    const used = new Set<string>();
+
+    const first = selectDiversePosts(mixed, 4, used);
+    for (const post of first) used.add(post.id);
+    const second = selectDiversePosts(mixed, 4, used);
+
+    expect(first.map((post) => post.source)).toEqual(["x", "news", "x", "news"]);
+    expect(second.map((post) => post.source)).toEqual(["x", "news", "x", "news"]);
+    expect(second.every((post) => !first.some((firstPost) => firstPost.id === post.id))).toBe(true);
+  });
+
   it("batches ten posts and runs batches concurrently", async () => {
     const queue = new PendingPostQueue(100);
     const recentContext = new RollingPostBuffer(100);
