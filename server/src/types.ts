@@ -68,5 +68,6 @@ export interface SuggestionGenerator {
     posts: SocialPost[];
     toneExamples: string[];
     replyTo: string;
+    avoidPhrases?: string[];
   }): Promise<BatchResult>;
 }

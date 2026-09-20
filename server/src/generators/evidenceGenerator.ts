@@ -12,6 +12,7 @@ export class EvidenceGenerator implements SuggestionGenerator {
     posts: SocialPost[];
     toneExamples: string[];
     replyTo: string;
+    avoidPhrases?: string[];
   }): Promise<BatchResult> {
     // The offline fallback cannot translate arbitrary languages reliably. Prefer
     // English evidence and never leak a source language into its suggestions.

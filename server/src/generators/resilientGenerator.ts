@@ -22,6 +22,7 @@ export class ResilientGenerator implements SuggestionGenerator {
     posts: SocialPost[];
     toneExamples: string[];
     replyTo: string;
+    avoidPhrases?: string[];
   }): Promise<BatchResult> {
     if (this.localActive) return this.local.generateBatch(input);
     try {
