@@ -95,6 +95,11 @@ export class GeminiGenerator implements SuggestionGenerator {
     const interaction = await this.client.interactions.create({
       model: this.model,
       input: prompt,
+      generation_config: {
+        // These are short, grounded chat suggestions, so minimize reasoning
+        // latency rather than spending tokens on deeper deliberation.
+        thinking_level: "minimal",
+      },
       response_format: {
         type: "text",
         mime_type: "application/json",
